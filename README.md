@@ -5,58 +5,49 @@
 ## Цель
 
 1. Пользователь указывает область шахматной доски на экране.
-2. Приложение автоматически определяет ориентацию доски (белые или чёрные снизу) независимо от цвета, которым играет пользователь.
+2. Приложение автоматически определяет ориентацию доски (белые или чёрные снизу).
 3. Режимы:
-   - **Coach** — показывает лучший ход (стрелка + подсветка). Человек ходит сам.
-   - **Auto** — программа играет полностью самостоятельно (клики по доске).
-4. Целевая сила ≈ 3000 Elo (Stockfish, 1 поток, низкая нагрузка на CPU).
+   - **Coach** — показывает лучший ход. Человек ходит сам.
+   - **Auto** — программа играет самостоятельно (клики).
+4. Целевая сила ≈ 3000 Elo (Stockfish, 1 поток, низкая нагрузка).
 
-Приоритетная платформа: **macOS**. Windows — позже.
+Приоритетная платформа: **macOS**.
 
 ## Архитектура
 
 ```
 alexaroffCoachChess/
-├── main.py              # GUI + управление режимами + lifecycle
-├── config.py            # константы, пути, настройки
-├── tools.py             # screen capture, mouse, region selection (низкий уровень)
-├── board_detector.py    # распознавание позиции + авто-ориентация
-├── engine_manager.py    # Stockfish wrapper (python-chess)
-├── coach.py             # логика Coach / Auto + визуализация ходов
+├── main.py              # GUI + lifecycle
+├── config.py            # константы
+├── tools.py             # screen / mouse / region
+├── board_detector.py    # ориентация + FEN (templates)
+├── engine_manager.py    # Stockfish
+├── coach.py             # режимы + память ходов
+├── advisor.py           # стратегические советы
+├── templates/           # шаблоны фигур (Duolingo)
 ├── requirements.txt
 └── README.md
 ```
-
-### Ответственность модулей
-
-| Модуль              | Ответственность |
-|---------------------|-----------------|
-| `config.py`         | Все константы, пути к Stockfish, параметры движка, цвета overlay |
-| `tools.py`          | Захват экрана (mss), клики (pyautogui), интерактивный выбор региона |
-| `board_detector.py` | Из региона → ориентация + FEN / chess.Board |
-| `engine_manager.py` | Запуск/остановка Stockfish, get_best_move с ограничением по времени |
-| `coach.py`          | Связка detector + engine + визуализация стрелки / авто-клики |
-| `main.py`           | Tkinter GUI, выбор режима, start/stop |
-
-Никакого наследия NautilusChess / Krevetka / aquatic-тематики.
 
 ## Требования
 
 - macOS (Apple Silicon / Intel)
 - Python 3.10+
-- Stockfish binary (рекомендуется 16+): `brew install stockfish`
+- Stockfish: `brew install stockfish`
 - Разрешения: **Screen Recording** + **Accessibility**
 
-## Установка
+## Установка (Mac)
 
 ```bash
+git clone https://github.com/alexaroff/alexaroffCoachChess.git
 cd alexaroffCoachChess
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+brew install stockfish   # если ещё нет
 ```
 
-Указать путь к Stockfish:
+Путь к Stockfish (если не находится автоматически):
 
 ```bash
 export STOCKFISH_PATH=/opt/homebrew/bin/stockfish
@@ -65,30 +56,31 @@ export STOCKFISH_PATH=/opt/homebrew/bin/stockfish
 ## Запуск
 
 ```bash
+source .venv/bin/activate
 python main.py
 ```
 
+При первом запуске macOS попросит разрешения Screen Recording и Accessibility — нужно выдать.
+
 ## Статус
 
-**Stage 2** — распознавание позиции (FEN).
+**Stage 2+ / 0.3.0** — распознавание + память + advisor.
 
-- Выбор области + ориентация (Stage 1)
-- Деление доски на 64 клетки
-- Определение пусто / занято (по variance яркости)
-- Определение цвета фигуры (белая / чёрная)
-- Базовая оценка типа фигуры (без шаблонов — точность средняя)
-- В GUI показывается текущий FEN + количество фигур + уверенность
-- Кнопка «Сканировать сейчас» для ручной проверки
+- Выбор области + ориентация
+- Template matching (шаблоны из Duolingo)
+- Форсирование стартовой позиции (100% на 1-м ходу)
+- Память предыдущей позиции + фильтр легальных ходов
+- `advisor.py` — короткие стратегические советы по фазам
+- В GUI: FEN, уверенность, совет тренера
 
-**Важно:** тип фигуры пока определяется эвристикой.  
-Для высокой точности позже добавим шаблоны (template matching).
+**Важно:** папка `templates/` должна лежать рядом с кодом (14 png). Без неё работает fallback-эвристика.
 
-Готово к тестированию. После тестов → улучшение точности + Stage 3 (стрелки).
+Следующее: Stage 3 (overlay со стрелкой).
 
 ## Roadmap
 
-- ~~Stage 1: region selection + orientation detection~~
-- ~~Stage 2: position recognition (FEN)~~
+- ~~Stage 1: region + orientation~~
+- ~~Stage 2: FEN + templates + memory + advisor~~
 - Stage 3: Coach mode (overlay стрелки)
 - Stage 4: Auto mode (клики)
-- Stage 5: стабилизация, hotkeys, настройки силы, упаковка в .app
+- Stage 5: стабилизация, hotkeys, .app
