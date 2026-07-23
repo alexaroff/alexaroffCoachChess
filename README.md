@@ -13,7 +13,7 @@
 
 Приоритетная платформа: **macOS**. Windows — позже.
 
-## Архитектура (чистая, Stage 0)
+## Архитектура
 
 ```
 alexaroffCoachChess/
@@ -32,20 +32,20 @@ alexaroffCoachChess/
 | Модуль              | Ответственность |
 |---------------------|-----------------|
 | `config.py`         | Все константы, пути к Stockfish, параметры движка, цвета overlay |
-| `tools.py`          | Захват экрана (mss), клики (pyautogui/pynput), интерактивный выбор региона |
-| `board_detector.py` | Из региона → FEN / chess.Board + определение, кто снизу |
-| `engine_manager.py` | Запуск/остановка Stockfish, get_best_move с ограничением по времени/глубине |
+| `tools.py`          | Захват экрана (mss), клики (pyautogui), интерактивный выбор региона |
+| `board_detector.py` | Из региона → ориентация + (Stage 2) FEN / chess.Board |
+| `engine_manager.py` | Запуск/остановка Stockfish, get_best_move с ограничением по времени |
 | `coach.py`          | Связка detector + engine + визуализация стрелки / авто-клики |
-| `main.py`           | Tkinter GUI, выбор режима, start/stop, overlay window |
+| `main.py`           | Tkinter GUI, выбор режима, start/stop |
 
 Никакого наследия NautilusChess / Krevetka / aquatic-тематики.
 
 ## Требования
 
-- macOS (протестировано на Apple Silicon / Intel)
+- macOS (Apple Silicon / Intel)
 - Python 3.10+
 - Stockfish binary (рекомендуется 16+): `brew install stockfish`
-- Разрешения: **Screen Recording** + **Accessibility** (для захвата экрана и кликов)
+- Разрешения: **Screen Recording** + **Accessibility**
 
 ## Установка
 
@@ -56,7 +56,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Указать путь к Stockfish через переменную окружения или в `config.py`:
+Указать путь к Stockfish:
 
 ```bash
 export STOCKFISH_PATH=/opt/homebrew/bin/stockfish
@@ -70,12 +70,17 @@ python main.py
 
 ## Статус
 
-**Stage 0** — чистый каркас + ребрендинг.  
-Готово к **Stage 1**: выбор области доски + авто-определение ориентации.
+**Stage 1** — выбор области доски + авто-определение ориентации.
 
-## Roadmap (кратко)
+- Интерактивный drag-select поверх экрана (Tkinter overlay)
+- Эвристика ориентации по яркости (белые/чёрные снизу)
+- Кнопка «Переопределить» ориентацию
 
-- Stage 1: region selection + orientation detection
+Готово к **Stage 2**: надёжное распознавание позиции (FEN).
+
+## Roadmap
+
+- ~~Stage 1: region selection + orientation detection~~
 - Stage 2: надёжное распознавание позиции (FEN)
 - Stage 3: Coach mode (overlay стрелки)
 - Stage 4: Auto mode (клики)
