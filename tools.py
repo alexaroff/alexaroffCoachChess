@@ -105,15 +105,98 @@ def move_to(x: int, y: int, duration: float = 0.1) -> None:
 
 def select_region_interactive() -> Optional[Region]:
     """
-    Interactive region selection (Stage 1 implementation).
+    Interactive region selection via transparent fullscreen overlay (Tkinter).
 
-    Placeholder: currently returns None.
-    Real implementation will use a transparent fullscreen overlay
-    where user drags a rectangle over the chessboard.
+    User drags a rectangle over the chessboard.
+    Returns Region in absolute screen coordinates, or None if cancelled (Esc / right-click).
+
+    Notes for macOS:
+    - Requires the app to have Accessibility + Screen Recording permissions.
+    - On Retina displays Tkinter coordinates are in points; mss uses pixels.
+      If the selected region is consistently offset/wrong size, we will add
+      explicit scale handling in a later iteration.
     """
-    # TODO Stage 1: implement drag-select overlay (tkinter or quartz)
-    print("[tools] select_region_interactive() — not implemented yet (Stage 1)")
-    return None
+    try:
+        import tkinter as tk
+    except ImportError:
+        print("[tools] tkinter is required for interactive region selection")
+        return None
+
+    result: list[Optional[Region]] = [None]
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    overlay = tk.Toplevel(root)
+    overlay.attributes("-fullscreen", True)
+    overlay.attributes("-alpha", 0.25)
+    overlay.attributes("-topmost", True)
+    overlay.configure(bg="black")
+    overlay.focus_force()
+
+    canvas = tk.Canvas(overlay, cursor="cross", bg="black", highlightthickness=0)
+    canvas.pack(fill=tk.BOTH, expand=True)
+
+    start_x = start_y = 0
+    rect_id = None
+
+    def on_press(event):
+        nonlocal start_x, start_y, rect_id
+        start_x, start_y = event.x, event.y
+        if rect_id is not None:
+            canvas.delete(rect_id)
+        rect_id = canvas.create_rectangle(
+            start_x, start_y, start_x, start_y,
+            outline="#00ff88", width=2
+        )
+
+    def on_drag(event):
+        if rect_id is not None:
+            canvas.coords(rect_id, start_x, start_y, event.x, event.y)
+
+    def on_release(event):
+        nonlocal result
+        if rect_id is None:
+            return
+        x1, y1 = start_x, start_y
+        x2, y2 = event.x, event.y
+        left = min(x1, x2)
+        top = min(y1, y2)
+        width = abs(x2 - x1)
+        height = abs(y2 - y1)
+
+        # Ignore tiny accidental clicks
+        if width < 40 or height < 40:
+            canvas.delete(rect_id)
+            return
+
+        result[0] = Region(left=left, top=top, width=width, height=height)
+        overlay.destroy()
+        root.destroy()
+
+    def on_cancel(event=None):
+        result[0] = None
+        overlay.destroy()
+        root.destroy()
+
+    canvas.bind("<ButtonPress-1>", on_press)
+    canvas.bind("<B1-Motion>", on_drag)
+    canvas.bind("<ButtonRelease-1>", on_release)
+    overlay.bind("<Escape>", on_cancel)
+    overlay.bind("<Button-3>", on_cancel)  # right-click cancel
+
+    # Instruction text
+    canvas.create_text(
+        overlay.winfo_screenwidth() // 2,
+        40,
+        text="Перетащите прямоугольник поверх доски  ·  Esc / ПКМ — отмена",
+        fill="#00ff88",
+        font=("Helvetica", 16, "bold"),
+    )
+
+    overlay.mainloop()
+    return result[0]
 
 
 # ---------------------------------------------------------------------------
