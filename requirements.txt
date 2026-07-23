@@ -1,0 +1,7 @@
+python-chess>=1.10
+mss>=9.0
+Pillow>=10.0
+numpy>=1.24
+pyautogui>=0.9.54
+# opencv-python>=4.8  # optional for Stage 2+, install later if needed
+# pynput>=1.7  # alternative to pyautogui for macOS if needed
