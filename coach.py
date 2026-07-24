@@ -1,9 +1,5 @@
 """
-alexaroffCoachChess — Coach / Auto logic.
-
-Hybrid temporal consistency (24.07.2026):
-- Detector is trusted mainly for occupancy + color
-- Piece types are recovered via legal-move search from previous position
+alexaroffCoachChess — Coach / Auto logic + arrow overlay.
 """
 
 from __future__ import annotations
@@ -19,6 +15,7 @@ from engine_manager import EngineManager
 from tools import click_at
 from config import MODE_COACH, MODE_AUTO, AUTO_CLICK_DELAY_MS
 from advisor import Advisor, Advice
+from overlay import ArrowOverlay
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +25,7 @@ class Coach:
         self.detector = detector
         self.engine = engine
         self.advisor = Advisor()
+        self.overlay = ArrowOverlay()
         self.mode: str = MODE_COACH
         self._running = False
 
@@ -49,10 +47,14 @@ class Coach:
         self._running = True
         self._last_fen = None
         self._last_board = None
+
+        # Give overlay the current region
+        self.overlay.set_region(self.detector.region)
         log.info("Coach started in %s mode", self.mode)
 
     def stop(self) -> None:
         self._running = False
+        self.overlay.hide()
         log.info("Coach stopped")
 
     @property
@@ -72,7 +74,6 @@ class Coach:
             return None
 
         board = self._reconcile(snapshot.board)
-
         if board is None:
             return None
 
@@ -86,6 +87,7 @@ class Coach:
         if board.is_game_over():
             log.info("Game over detected")
             self._last_advice = self.advisor.game_over(board)
+            self.overlay.hide()
             return None
 
         move = self.engine.get_best_move(board)
@@ -104,23 +106,17 @@ class Coach:
         if self.mode == MODE_COACH:
             self._show_move(snapshot, move)
         elif self.mode == MODE_AUTO:
+            self.overlay.hide()
             self._execute_move(snapshot, move)
 
         return move
 
     def _reconcile(self, detected: chess.Board) -> Optional[chess.Board]:
-        """
-        Hybrid reconcile:
-        We trust the detector mainly for which squares are occupied and of which color.
-        Exact piece type is recovered by finding the legal move that best explains
-        the observed occupancy + color pattern.
-        """
         if self._last_board is None:
             return detected
 
         prev = self._last_board
 
-        # Exact match (including types)
         if detected.piece_map() == prev.piece_map():
             return prev
 
@@ -137,7 +133,6 @@ class Coach:
 
         no_move_score = self._color_similarity(prev, detected)
 
-        # Thresholds are lower because we only compare colors + occupancy
         if best_board is not None and best_score >= 30.0 and best_score >= no_move_score:
             log.info("Reconciled via legal move (color-score=%.1f)", best_score)
             return best_board
@@ -145,38 +140,36 @@ class Coach:
         if no_move_score >= 31.0:
             return prev
 
-        log.debug("Using raw detection (best color-score=%.1f)", best_score)
         return detected
 
     @staticmethod
     def _color_similarity(a: chess.Board, b: chess.Board) -> float:
-        """
-        Score based on occupancy + color only (ignores piece type).
-        Each square contributes:
-          1.0 if both empty or both have piece of same color
-          0.0 otherwise
-        """
         score = 0.0
         for sq in chess.SQUARES:
             pa = a.piece_at(sq)
             pb = b.piece_at(sq)
-
             if pa is None and pb is None:
                 score += 1.0
             elif pa is not None and pb is not None and pa.color == pb.color:
                 score += 1.0
-            # else 0
-
         return score
 
     def _show_move(self, snapshot: BoardSnapshot, move: chess.Move) -> None:
-        log.debug("Would show arrow for %s", move.uci())
+        from_xy = self.detector.square_to_pixel(move.from_square)
+        to_xy = self.detector.square_to_pixel(move.to_square)
+
+        if from_xy is None or to_xy is None:
+            log.warning("Cannot map squares to pixels for arrow")
+            self.overlay.hide()
+            return
+
+        log.info("Showing arrow %s → %s", from_xy, to_xy)
+        self.overlay.show_arrow(from_xy, to_xy)
 
     def _execute_move(self, snapshot: BoardSnapshot, move: chess.Move) -> None:
         from_xy = self.detector.square_to_pixel(move.from_square)
         to_xy = self.detector.square_to_pixel(move.to_square)
         if from_xy is None or to_xy is None:
-            log.warning("Cannot map squares to pixels")
             return
         time.sleep(AUTO_CLICK_DELAY_MS / 1000.0)
         click_at(*from_xy)
