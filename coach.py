@@ -1,10 +1,9 @@
 """
 alexaroffCoachChess — Coach / Auto logic.
 
-Orchestrates BoardDetector + EngineManager + Advisor.
-- Temporal consistency (previous position + legal moves)
-- Best move from Stockfish
-- Short strategic tips from advisor
+Hybrid temporal consistency (24.07.2026):
+- Detector is trusted mainly for occupancy + color
+- Piece types are recovered via legal-move search from previous position
 """
 
 from __future__ import annotations
@@ -25,18 +24,13 @@ log = logging.getLogger(__name__)
 
 
 class Coach:
-    def __init__(
-        self,
-        detector: BoardDetector,
-        engine: EngineManager,
-    ):
+    def __init__(self, detector: BoardDetector, engine: EngineManager):
         self.detector = detector
         self.engine = engine
         self.advisor = Advisor()
         self.mode: str = MODE_COACH
         self._running = False
 
-        # Temporal memory
         self._last_fen: Optional[str] = None
         self._last_board: Optional[chess.Board] = None
         self._last_advice: Optional[Advice] = None
@@ -70,13 +64,6 @@ class Coach:
         return self._last_advice
 
     def tick(self) -> Optional[chess.Move]:
-        """
-        One iteration:
-        1. Capture + recognize
-        2. Reconcile with previous position (legal moves)
-        3. Ask engine for best move
-        4. Ask advisor for a short tip
-        """
         if not self._running:
             return None
 
@@ -91,7 +78,7 @@ class Coach:
 
         fen = board.fen()
         if fen == self._last_fen:
-            return None  # nothing changed
+            return None
 
         self._last_fen = fen
         self._last_board = board.copy()
@@ -105,7 +92,6 @@ class Coach:
         if move is None:
             return None
 
-        # Strategic tip
         self._last_advice = self.advisor.advice(board, move)
 
         log.info(
@@ -124,61 +110,66 @@ class Coach:
 
     def _reconcile(self, detected: chess.Board) -> Optional[chess.Board]:
         """
-        Improve recognition using previous position + legal moves.
-
-        If we have a previous board:
-        - Generate all legal moves
-        - See which resulting position best matches the newly detected board
-        - Prefer a legal continuation over a noisy raw detection
+        Hybrid reconcile:
+        We trust the detector mainly for which squares are occupied and of which color.
+        Exact piece type is recovered by finding the legal move that best explains
+        the observed occupancy + color pattern.
         """
         if self._last_board is None:
-            # First snapshot — trust detection (starting-position force already applied)
             return detected
 
         prev = self._last_board
 
-        # Exact match?
+        # Exact match (including types)
         if detected.piece_map() == prev.piece_map():
             return prev
 
-        # Try every legal move from previous position
         best_board = None
-        best_score = -1
+        best_score = -1.0
 
         for move in prev.legal_moves:
             b = prev.copy()
             b.push(move)
-            score = self._similarity(b, detected)
+            score = self._color_similarity(b, detected)
             if score > best_score:
                 best_score = score
                 best_board = b
 
-        # Also consider "no move happened" (score vs previous)
-        no_move_score = self._similarity(prev, detected)
+        no_move_score = self._color_similarity(prev, detected)
 
-        # Threshold: if a legal move explains ≥ 28/32 pieces, trust it
-        if best_board is not None and best_score >= 28 and best_score >= no_move_score:
-            log.debug("Reconciled via legal move (score=%d)", best_score)
+        # Thresholds are lower because we only compare colors + occupancy
+        if best_board is not None and best_score >= 30.0 and best_score >= no_move_score:
+            log.info("Reconciled via legal move (color-score=%.1f)", best_score)
             return best_board
 
-        if no_move_score >= 30:
+        if no_move_score >= 31.0:
             return prev
 
-        # Fallback: raw detection (may contain type errors)
-        log.debug("Using raw detection (best legal score=%d)", best_score)
+        log.debug("Using raw detection (best color-score=%.1f)", best_score)
         return detected
 
     @staticmethod
-    def _similarity(a: chess.Board, b: chess.Board) -> int:
-        """How many squares have the same piece (or both empty)."""
-        score = 0
+    def _color_similarity(a: chess.Board, b: chess.Board) -> float:
+        """
+        Score based on occupancy + color only (ignores piece type).
+        Each square contributes:
+          1.0 if both empty or both have piece of same color
+          0.0 otherwise
+        """
+        score = 0.0
         for sq in chess.SQUARES:
-            if a.piece_at(sq) == b.piece_at(sq):
-                score += 1
+            pa = a.piece_at(sq)
+            pb = b.piece_at(sq)
+
+            if pa is None and pb is None:
+                score += 1.0
+            elif pa is not None and pb is not None and pa.color == pb.color:
+                score += 1.0
+            # else 0
+
         return score
 
     def _show_move(self, snapshot: BoardSnapshot, move: chess.Move) -> None:
-        # Stage 3: overlay arrow
         log.debug("Would show arrow for %s", move.uci())
 
     def _execute_move(self, snapshot: BoardSnapshot, move: chess.Move) -> None:
