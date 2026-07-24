@@ -1,86 +1,90 @@
 # alexaroffCoachChess
 
-Десктоп-приложение для macOS: шахматный тренер и авто-игрок поверх любой шахматной доски на экране.
+Десктоп-приложение для macOS: шахматный тренер и авто-игрок поверх любой шахматной доски на экране (в первую очередь Duolingo).
 
 ## Цель
 
 1. Пользователь указывает область шахматной доски на экране.
-2. Приложение автоматически определяет ориентацию доски (белые или чёрные снизу).
+2. Приложение определяет ориентацию доски (белые или чёрные снизу).
 3. Режимы:
-   - **Coach** — показывает лучший ход. Человек ходит сам.
+   - **Coach** — показывает лучший ход (стрелка на доске + текст).
    - **Auto** — программа играет самостоятельно (клики).
-4. Целевая сила ≈ 3000 Elo (Stockfish, 1 поток, низкая нагрузка).
+4. Целевая сила ≈ 3000 Elo (Stockfish, 1 поток).
 
-Приоритетная платформа: **macOS**.
+Приоритетная платформа: **macOS** (Apple Silicon).
 
-## Архитектура
+## Текущий статус (24 июля 2026, вечер)
+
+**Реальная готовность: ~Stage 2.2 (нестабильно)**
+
+### Что работает
+- Выбор области доски (через два клика мышью в терминале — самый стабильный способ на macOS Tahoe).
+- Захват экрана (mss).
+- Определение стартовой позиции + жёсткое форсирование классического FEN (работает надёжно).
+- Загрузка шаблонов из `templates/`.
+- Stockfish через python-chess.
+- Базовый Coach/Auto каркас + temporal memory (reconcile через legal moves).
+- Advisor (текстовые советы).
+
+### Что работает плохо / не работает
+- **Распознавание позиции после первого хода** — сильно ошибается (часто видит почти все фигуры как пешки, путает цвета и типы). Текущий template matching (средняя абсолютная разница по яркости) слишком слабый для реального Duolingo.
+- **Ориентация** — иногда определяет правильно, иногда нет (зависит от освещения/темы).
+- **Визуальные стрелки (Stage 3)** — полностью отсутствуют. `_show_move()` сейчас только пишет в лог.
+- Полноэкранный оверлей выбора области на macOS Tahoe 26.x + Retina работает крайне нестабильно (поэтому временно используется выбор двумя кликами).
+
+### Важные технические детали
+- Python 3.11+ (3.9 ломается на pyobjc).
+- Нужны разрешения: **Screen Recording** + **Accessibility**.
+- Retina scale = 2.0 (координаты Tk ≠ пиксели mss).
+- Шаблоны были пересняты 24.07.2026 со стартовой позиции Duolingo (12 файлов).
+- Движок иногда падает с `EngineTerminatedError` при повторных вызовах.
+
+### Принятое решение (Path 2)
+Идём по правильному, но более долгому пути:
+1. Переписать распознавание на более сильный метод (нормализованная кросс-корреляция + предобработка + лучшие пороги).
+2. После стабилизации FEN — реализовать настоящий overlay со стрелками (Stage 3).
+
+### Структура
 
 ```
 alexaroffCoachChess/
-├── main.py              # GUI + lifecycle
-├── config.py            # константы
-├── tools.py             # screen / mouse / region
-├── board_detector.py    # ориентация + FEN (templates)
-├── engine_manager.py    # Stockfish
-├── coach.py             # режимы + память ходов
-├── advisor.py           # стратегические советы
-├── templates/           # шаблоны фигур (Duolingo)
+├── main.py
+├── config.py
+├── tools.py              # screen / mouse / region selection (сейчас two-click)
+├── board_detector.py     # ориентация + FEN (требует сильного улучшения)
+├── engine_manager.py
+├── coach.py
+├── advisor.py
+├── templates/            # 12 png (пересняты 24.07.2026)
 ├── requirements.txt
 └── README.md
 ```
 
-## Требования
-
-- macOS (Apple Silicon / Intel)
-- Python 3.10+
-- Stockfish: `brew install stockfish`
-- Разрешения: **Screen Recording** + **Accessibility**
-
-## Установка (Mac)
+## Установка и запуск
 
 ```bash
 git clone https://github.com/alexaroff/alexaroffCoachChess.git
 cd alexaroffCoachChess
-python3 -m venv .venv
+python3.11 -m venv .venv          # обязательно 3.11+
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
-brew install stockfish   # если ещё нет
-```
-
-Путь к Stockfish (если не находится автоматически):
-
-```bash
-export STOCKFISH_PATH=/opt/homebrew/bin/stockfish
-```
-
-## Запуск
-
-```bash
-source .venv/bin/activate
+brew install stockfish
 python main.py
 ```
 
-При первом запуске macOS попросит разрешения Screen Recording и Accessibility — нужно выдать.
+## Roadmap (актуальный)
 
-## Статус
+- [x] Stage 1: region + orientation (базово)
+- [~] Stage 2: FEN + templates + memory + advisor (стартовая позиция работает, после ходов — нет)
+- [ ] Stage 2.5: **Сильное улучшение распознавания** (текущий приоритет)
+- [ ] Stage 3: Coach mode — overlay со стрелками на доске
+- [ ] Stage 4: Стабильный Auto mode
+- [ ] Stage 5: .app, hotkeys, полировка
 
-**Stage 2+ / 0.3.0** — распознавание + память + advisor.
+---
 
-- Выбор области + ориентация
-- Template matching (шаблоны из Duolingo)
-- Форсирование стартовой позиции (100% на 1-м ходу)
-- Память предыдущей позиции + фильтр легальных ходов
-- `advisor.py` — короткие стратегические советы по фазам
-- В GUI: FEN, уверенность, совет тренера
-
-**Важно:** папка `templates/` должна лежать рядом с кодом (14 png). Без неё работает fallback-эвристика.
-
-Следующее: Stage 3 (overlay со стрелкой).
-
-## Roadmap
-
-- ~~Stage 1: region + orientation~~
-- ~~Stage 2: FEN + templates + memory + advisor~~
-- Stage 3: Coach mode (overlay стрелки)
-- Stage 4: Auto mode (клики)
-- Stage 5: стабилизация, hotkeys, .app
+**Для передачи другим моделям (Claude и т.д.):**  
+Главная боль сейчас — слабый template matching после первого хода.  
+Стрелки ещё не начаты.  
+Выбор области через fullscreen Tk на Tahoe сломан, используется two-click fallback.
