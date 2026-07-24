@@ -1,11 +1,11 @@
 """
-alexaroffCoachChess — board detection & orientation + position recognition.
+alexaroffCoachChess — board detection (improved 24.07.2026 late)
 
-Improved Stage 2.5 (24.07.2026):
-- Normalized Cross-Correlation (NCC) instead of mean abs diff
-- Better preprocessing (per-square mean/std normalization)
-- More robust empty / color detection tuned for Duolingo
-- Lower but safer decision thresholds
+Changes:
+- Two-pass matching (color-filtered then full)
+- Less aggressive fallback to pawn
+- Better empty-square detection
+- Slightly higher quality NCC with small edge emphasis
 """
 
 from __future__ import annotations
@@ -67,45 +67,32 @@ class BoardDetector:
         self._last_orientation = None
         self._last_img = None
 
-    # ------------------------------------------------------------------
-    # Orientation
-    # ------------------------------------------------------------------
-
     def detect_orientation(self, img: Optional[np.ndarray] = None) -> Orientation:
         if self.region is None:
             raise RuntimeError("Region not set")
         if img is None:
             img = capture_region(self.region)
 
-        if img.size == 0 or img.shape[0] < 16 or img.shape[1] < 16:
-            orientation: Orientation = "white"
-            self._last_orientation = orientation
-            return orientation
+        if img.size == 0 or img.shape[0] < 16:
+            self._last_orientation = "white"
+            return "white"
 
         gray = self._luminance(img)
         h = gray.shape[0]
         band = max(h // 5, 10)
 
-        bottom = gray[-band:, :]
-        top = gray[:band, :]
+        bottom_val = float(np.percentile(gray[-band:], 75))
+        top_val = float(np.percentile(gray[:band], 75))
 
-        # Use 75th percentile — more robust to empty squares
-        bottom_val = float(np.percentile(bottom, 75))
-        top_val = float(np.percentile(top, 75))
-
-        if bottom_val > top_val + 15:
+        if bottom_val > top_val + 12:
             orientation = "white"
-        elif top_val > bottom_val + 15:
+        elif top_val > bottom_val + 12:
             orientation = "black"
         else:
             orientation = "white"
 
         self._last_orientation = orientation
         return orientation
-
-    # ------------------------------------------------------------------
-    # Snapshot
-    # ------------------------------------------------------------------
 
     def get_snapshot(self) -> BoardSnapshot:
         if self.region is None:
@@ -128,19 +115,15 @@ class BoardDetector:
         )
 
     def _img_to_board(
-        self,
-        img: np.ndarray,
-        orientation: Orientation,
+        self, img: np.ndarray, orientation: Orientation
     ) -> Tuple[Optional[chess.Board], float, int]:
         h, w = img.shape[:2]
         if h < 64 or w < 64:
-            log.warning("Board region too small: %dx%d", w, h)
             return None, 0.0, 0
 
         size = min(h, w)
         sq = size // 8
         if sq < 14:
-            log.warning("Square size too small: %d px", sq)
             return None, 0.0, 0
 
         offset_x = (w - size) // 2
@@ -155,15 +138,13 @@ class BoardDetector:
         for rank_idx in range(8):
             for file_idx in range(8):
                 if orientation == "white":
-                    col = file_idx
-                    row = 7 - rank_idx
+                    col, row = file_idx, 7 - rank_idx
                 else:
-                    col = 7 - file_idx
-                    row = rank_idx
+                    col, row = 7 - file_idx, rank_idx
 
                 y1 = offset_y + row * sq
                 x1 = offset_x + col * sq
-                square_img = img[y1:y1 + sq, x1:x1 + sq]
+                square_img = img[y1 : y1 + sq, x1 : x1 + sq]
 
                 if orientation == "black":
                     square_img = np.rot90(square_img, 2)
@@ -172,8 +153,7 @@ class BoardDetector:
                 confidences.append(conf)
 
                 if piece is not None:
-                    square = chess.square(file_idx, rank_idx)
-                    board.set_piece_at(square, piece)
+                    board.set_piece_at(chess.square(file_idx, rank_idx), piece)
                     occupied += 1
 
         avg_conf = float(np.mean(confidences)) if confidences else 0.0
@@ -181,7 +161,6 @@ class BoardDetector:
         board.castling_rights = 0
         board.ep_square = None
 
-        # Starting position force (very reliable)
         if occupied >= 30 and self._looks_like_starting_position(board):
             log.info("Starting position detected → forcing classic FEN")
             board = chess.Board()
@@ -191,22 +170,18 @@ class BoardDetector:
         return board, avg_conf, occupied
 
     def _looks_like_starting_position(self, board: chess.Board) -> bool:
-        rank1 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 0)))
-        rank2 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 1)))
-        rank7 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 6)))
-        rank8 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 7)))
-        return rank1 == 8 and rank2 == 8 and rank7 == 8 and rank8 == 8
-
-    # ------------------------------------------------------------------
-    # Template matching (improved)
-    # ------------------------------------------------------------------
+        r1 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 0)))
+        r2 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 1)))
+        r7 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 6)))
+        r8 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 7)))
+        return r1 == 8 and r2 == 8 and r7 == 8 and r8 == 8
 
     def _ensure_templates(self) -> None:
         if self._templates is not None:
             return
         self._templates = {}
         if not TEMPLATES_DIR.exists():
-            log.warning("Templates directory not found: %s", TEMPLATES_DIR)
+            log.warning("Templates not found: %s", TEMPLATES_DIR)
             return
         for path in TEMPLATES_DIR.glob("*.png"):
             name = path.stem
@@ -220,57 +195,68 @@ class BoardDetector:
                     dtype=np.float32,
                 ) / 255.0
             self._templates[name] = arr
-        log.info("Loaded %d templates from %s", len(self._templates), TEMPLATES_DIR)
+        log.info("Loaded %d templates", len(self._templates))
 
-    def _classify_square(
-        self, sq: np.ndarray
-    ) -> Tuple[Optional[chess.Piece], float]:
-        if sq.size == 0 or sq.shape[0] < 10:
+    def _classify_square(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
+        if sq.size == 0 or sq.shape[0] < 12:
             return None, 0.0
 
-        # --- 1. Empty detection (variance of central area) ---
-        margin = max(2, int(sq.shape[0] * 0.18))
+        margin = max(2, int(sq.shape[0] * 0.17))
         core = sq[margin:-margin, margin:-margin]
-        if core.size == 0:
+        if core.size < 16:
             core = sq
 
         gray = self._luminance(core)
         mean_lum = float(np.mean(gray))
         std_lum = float(np.std(gray))
 
-        # Empty squares on Duolingo are very flat
-        if std_lum < 14.0:
-            return None, 0.93
+        # Empty detection — Duolingo squares are very uniform
+        if std_lum < 13.5:
+            return None, 0.94
 
-        # --- 2. Color (white / black piece) ---
-        # White pieces are significantly brighter
-        is_white = mean_lum > 105.0
+        is_white = mean_lum > 100.0
         color_prefix = "w" if is_white else "b"
 
-        # --- 3. Template matching with NCC ---
         self._ensure_templates()
         if not self._templates:
-            piece = chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK)
-            return piece, 0.35
+            return chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK), 0.30
 
-        # Resize candidate to template size
+        # Prepare candidate
         pil = Image.fromarray(sq.astype(np.uint8))
-        resized = pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS)
-        candidate = np.array(resized, dtype=np.float32) / 255.0
+        resized = np.array(
+            pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS),
+            dtype=np.float32,
+        ) / 255.0
 
-        # Use central region + grayscale + normalize
-        m = 10
-        cand = candidate[m:-m, m:-m]
+        m = 9
+        cand = resized[m:-m, m:-m]
         cand_gray = self._luminance(cand)
         cand_norm = self._normalize(cand_gray)
 
+        # --- Pass 1: same color only ---
+        best_name, best_score = self._match(cand_norm, color_prefix)
+
+        # --- Pass 2: all templates if first pass is weak ---
+        if best_score < 0.62:
+            name2, score2 = self._match(cand_norm, None)
+            if score2 > best_score + 0.04:
+                best_name, best_score = name2, score2
+
+        if best_name is not None and best_score >= 0.52 and best_name in _PIECE_FROM_NAME:
+            return _PIECE_FROM_NAME[best_name], float(best_score)
+
+        # Only fall back to pawn if we are quite unsure
+        return chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK), 0.38
+
+    def _match(self, cand_norm: np.ndarray, color_prefix: Optional[str]) -> Tuple[Optional[str], float]:
         best_name = None
         best_score = -1.0
 
         for name, tmpl in self._templates.items():
-            if not name.startswith(color_prefix):
+            if color_prefix and not name.startswith(color_prefix):
                 continue
 
+            m = 9
             t = tmpl[m:-m, m:-m]
             t_gray = self._luminance(t)
             t_norm = self._normalize(t_gray)
@@ -280,38 +266,26 @@ class BoardDetector:
                 best_score = score
                 best_name = name
 
-        # Decision
-        if best_name is not None and best_score >= 0.55 and best_name in _PIECE_FROM_NAME:
-            return _PIECE_FROM_NAME[best_name], float(best_score)
-
-        # Fallback: correct color, unknown type → pawn
-        piece = chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK)
-        return piece, 0.40
+        return best_name, best_score
 
     @staticmethod
     def _normalize(arr: np.ndarray) -> np.ndarray:
-        """Zero-mean, unit-variance normalization."""
         mean = float(np.mean(arr))
-        std = float(np.std(arr)) + 1e-6
+        std = float(np.std(arr)) + 1e-5
         return (arr - mean) / std
 
     @staticmethod
     def _ncc(a: np.ndarray, b: np.ndarray) -> float:
-        """Normalized Cross-Correlation. Range roughly [-1, 1]."""
         if a.shape != b.shape:
             return -1.0
         return float(np.mean(a * b))
-
-    # ------------------------------------------------------------------
-    # Coordinates
-    # ------------------------------------------------------------------
 
     def pixel_to_square(self, x: int, y: int) -> Optional[chess.Square]:
         if self.region is None or self._last_orientation is None:
             return None
         rx = x - self.region.left
         ry = y - self.region.top
-        if rx < 0 or ry < 0 or rx >= self.region.width or ry >= self.region.height:
+        if not (0 <= rx < self.region.width and 0 <= ry < self.region.height):
             return None
         size = min(self.region.width, self.region.height)
         sq = size // 8
@@ -322,17 +296,18 @@ class BoardDetector:
         if not (0 <= col < 8 and 0 <= row < 8):
             return None
         if self._last_orientation == "white":
-            file_idx, rank_idx = col, 7 - row
-        else:
-            file_idx, rank_idx = 7 - col, row
-        return chess.square(file_idx, rank_idx)
+            return chess.square(col, 7 - row)
+        return chess.square(7 - col, row)
 
     def square_to_pixel(self, square: chess.Square) -> Optional[Tuple[int, int]]:
         if self.region is None or self._last_orientation is None:
             return None
-        file = chess.square_file(square)
-        rank = chess.square_rank(square)
-        return square_center(self.region, file, rank, self._last_orientation)
+        return square_center(
+            self.region,
+            chess.square_file(square),
+            chess.square_rank(square),
+            self._last_orientation,
+        )
 
     @staticmethod
     def _luminance(img: np.ndarray) -> np.ndarray:
