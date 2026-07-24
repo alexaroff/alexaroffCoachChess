@@ -1,12 +1,11 @@
 """
 alexaroffCoachChess — board detection & orientation + position recognition.
 
-Given a screen Region that tightly contains a chessboard:
-- Detect which side is at the bottom (white or black)
-- Extract current position as FEN / chess.Board
-
-Stage 2+: template matching (templates extracted from Duolingo).
-Works for both orientations (white or black at bottom).
+Improved Stage 2.5 (24.07.2026):
+- Normalized Cross-Correlation (NCC) instead of mean abs diff
+- Better preprocessing (per-square mean/std normalization)
+- More robust empty / color detection tuned for Duolingo
+- Lower but safer decision thresholds
 """
 
 from __future__ import annotations
@@ -26,9 +25,8 @@ log = logging.getLogger(__name__)
 
 Orientation = Literal["white", "black"]
 
-# Templates live next to this file
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
-TEMPLATE_SIZE = 64  # all templates are 64x64
+TEMPLATE_SIZE = 64
 
 
 @dataclass
@@ -41,7 +39,6 @@ class BoardSnapshot:
     occupied_count: int = 0
 
 
-# Mapping from template filename stem → chess.Piece
 _PIECE_FROM_NAME: Dict[str, chess.Piece] = {
     "wP": chess.Piece.from_symbol("P"),
     "wN": chess.Piece.from_symbol("N"),
@@ -63,7 +60,7 @@ class BoardDetector:
         self.region = region
         self._last_orientation: Optional[Orientation] = None
         self._last_img: Optional[np.ndarray] = None
-        self._templates: Optional[Dict[str, np.ndarray]] = None  # name → float32 [0,1] HxWx3
+        self._templates: Optional[Dict[str, np.ndarray]] = None
 
     def set_region(self, region: Region) -> None:
         self.region = region
@@ -87,13 +84,18 @@ class BoardDetector:
 
         gray = self._luminance(img)
         h = gray.shape[0]
-        band = max(h // 4, 8)
-        bottom_mean = float(np.mean(gray[-band:, :]))
-        top_mean = float(np.mean(gray[:band, :]))
+        band = max(h // 5, 10)
 
-        if bottom_mean > top_mean + 12:
+        bottom = gray[-band:, :]
+        top = gray[:band, :]
+
+        # Use 75th percentile — more robust to empty squares
+        bottom_val = float(np.percentile(bottom, 75))
+        top_val = float(np.percentile(top, 75))
+
+        if bottom_val > top_val + 15:
             orientation = "white"
-        elif top_mean > bottom_mean + 12:
+        elif top_val > bottom_val + 15:
             orientation = "black"
         else:
             orientation = "white"
@@ -137,7 +139,7 @@ class BoardDetector:
 
         size = min(h, w)
         sq = size // 8
-        if sq < 12:
+        if sq < 14:
             log.warning("Square size too small: %d px", sq)
             return None, 0.0, 0
 
@@ -163,9 +165,6 @@ class BoardDetector:
                 x1 = offset_x + col * sq
                 square_img = img[y1:y1 + sq, x1:x1 + sq]
 
-                # When black is at the bottom the whole board is rotated 180°.
-                # Piece sprites are also upside-down relative to our templates,
-                # so we rotate the square back before matching.
                 if orientation == "black":
                     square_img = np.rot90(square_img, 2)
 
@@ -182,9 +181,7 @@ class BoardDetector:
         board.castling_rights = 0
         board.ep_square = None
 
-        # --- Starting position detection ---
-        # If we see ~32 pieces and both back ranks look occupied,
-        # force the classic starting FEN (huge accuracy win on move 1).
+        # Starting position force (very reliable)
         if occupied >= 30 and self._looks_like_starting_position(board):
             log.info("Starting position detected → forcing classic FEN")
             board = chess.Board()
@@ -194,7 +191,6 @@ class BoardDetector:
         return board, avg_conf, occupied
 
     def _looks_like_starting_position(self, board: chess.Board) -> bool:
-        """Heuristic: both ranks 1/2 and 7/8 are fully occupied."""
         rank1 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 0)))
         rank2 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 1)))
         rank7 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 6)))
@@ -202,7 +198,7 @@ class BoardDetector:
         return rank1 == 8 and rank2 == 8 and rank7 == 8 and rank8 == 8
 
     # ------------------------------------------------------------------
-    # Template matching
+    # Template matching (improved)
     # ------------------------------------------------------------------
 
     def _ensure_templates(self) -> None:
@@ -214,6 +210,8 @@ class BoardDetector:
             return
         for path in TEMPLATES_DIR.glob("*.png"):
             name = path.stem
+            if name.startswith("empty"):
+                continue
             img = Image.open(path).convert("RGB")
             arr = np.array(img, dtype=np.float32) / 255.0
             if arr.shape[0] != TEMPLATE_SIZE or arr.shape[1] != TEMPLATE_SIZE:
@@ -227,48 +225,44 @@ class BoardDetector:
     def _classify_square(
         self, sq: np.ndarray
     ) -> Tuple[Optional[chess.Piece], float]:
-        """
-        Hybrid classification:
-        1. Fast luminance check → empty / white / black
-        2. Template matching only among templates of the detected color
-        """
-        if sq.size == 0 or sq.shape[0] < 8:
+        if sq.size == 0 or sq.shape[0] < 10:
             return None, 0.0
 
-        # --- Step 1: occupancy + color by luminance (very reliable on Duolingo) ---
-        margin = max(1, int(sq.shape[0] * 0.15))
+        # --- 1. Empty detection (variance of central area) ---
+        margin = max(2, int(sq.shape[0] * 0.18))
         core = sq[margin:-margin, margin:-margin]
         if core.size == 0:
             core = sq
+
         gray = self._luminance(core)
         mean_lum = float(np.mean(gray))
         std_lum = float(np.std(gray))
 
-        if std_lum < 12.0:
-            return None, 0.92  # empty
+        # Empty squares on Duolingo are very flat
+        if std_lum < 14.0:
+            return None, 0.93
 
-        is_white = mean_lum > 95.0
+        # --- 2. Color (white / black piece) ---
+        # White pieces are significantly brighter
+        is_white = mean_lum > 105.0
         color_prefix = "w" if is_white else "b"
 
-        # --- Step 2: template match only against same-color pieces ---
+        # --- 3. Template matching with NCC ---
         self._ensure_templates()
         if not self._templates:
             piece = chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK)
-            return piece, 0.40
+            return piece, 0.35
 
-        pil = Image.fromarray(sq)
+        # Resize candidate to template size
+        pil = Image.fromarray(sq.astype(np.uint8))
         resized = pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS)
         candidate = np.array(resized, dtype=np.float32) / 255.0
 
-        # Match on central region only (reduces influence of square color)
-        m = 8
-        cand_core = candidate[m:-m, m:-m]
-        # Use grayscale for shape matching
-        cand_gray = (
-            0.299 * cand_core[:, :, 0]
-            + 0.587 * cand_core[:, :, 1]
-            + 0.114 * cand_core[:, :, 2]
-        )
+        # Use central region + grayscale + normalize
+        m = 10
+        cand = candidate[m:-m, m:-m]
+        cand_gray = self._luminance(cand)
+        cand_norm = self._normalize(cand_gray)
 
         best_name = None
         best_score = -1.0
@@ -276,60 +270,37 @@ class BoardDetector:
         for name, tmpl in self._templates.items():
             if not name.startswith(color_prefix):
                 continue
-            tmpl_core = tmpl[m:-m, m:-m]
-            tmpl_gray = (
-                0.299 * tmpl_core[:, :, 0]
-                + 0.587 * tmpl_core[:, :, 1]
-                + 0.114 * tmpl_core[:, :, 2]
-            )
-            score = 1.0 - float(np.mean(np.abs(cand_gray - tmpl_gray)))
+
+            t = tmpl[m:-m, m:-m]
+            t_gray = self._luminance(t)
+            t_norm = self._normalize(t_gray)
+
+            score = self._ncc(cand_norm, t_norm)
             if score > best_score:
                 best_score = score
                 best_name = name
 
-        if best_name is not None and best_score >= 0.70 and best_name in _PIECE_FROM_NAME:
-            return _PIECE_FROM_NAME[best_name], best_score
+        # Decision
+        if best_name is not None and best_score >= 0.55 and best_name in _PIECE_FROM_NAME:
+            return _PIECE_FROM_NAME[best_name], float(best_score)
 
         # Fallback: correct color, unknown type → pawn
         piece = chess.Piece(chess.PAWN, chess.WHITE if is_white else chess.BLACK)
-        return piece, 0.50
+        return piece, 0.40
 
     @staticmethod
-    def _similarity(a: np.ndarray, b: np.ndarray) -> float:
-        """
-        Simple and fast similarity: 1 - mean absolute difference.
-        Range [0, 1], higher = more similar.
-        """
-        return 1.0 - float(np.mean(np.abs(a - b)))
+    def _normalize(arr: np.ndarray) -> np.ndarray:
+        """Zero-mean, unit-variance normalization."""
+        mean = float(np.mean(arr))
+        std = float(np.std(arr)) + 1e-6
+        return (arr - mean) / std
 
-    # ------------------------------------------------------------------
-    # Heuristic fallback (color + occupancy)
-    # ------------------------------------------------------------------
-
-    def _classify_square_heuristic(
-        self, sq: np.ndarray
-    ) -> Tuple[Optional[chess.Piece], float]:
-        margin = max(1, int(sq.shape[0] * 0.15))
-        core = sq[margin:-margin, margin:-margin]
-        if core.size == 0:
-            core = sq
-
-        gray = self._luminance(core)
-        mean_lum = float(np.mean(gray))
-        std_lum = float(np.std(gray))
-
-        if std_lum < 12.0:
-            return None, 0.85
-
-        # On Duolingo both sides are brighter than the board;
-        # white pieces are still significantly brighter than black.
-        is_white = mean_lum > 95.0
-        color = chess.WHITE if is_white else chess.BLACK
-
-        # Without reliable type we default to pawn (better than random)
-        # so that at least the engine gets the correct material color.
-        piece = chess.Piece(chess.PAWN, color)
-        return piece, 0.45
+    @staticmethod
+    def _ncc(a: np.ndarray, b: np.ndarray) -> float:
+        """Normalized Cross-Correlation. Range roughly [-1, 1]."""
+        if a.shape != b.shape:
+            return -1.0
+        return float(np.mean(a * b))
 
     # ------------------------------------------------------------------
     # Coordinates
