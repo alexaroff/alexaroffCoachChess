@@ -1,8 +1,7 @@
 """
 alexaroffCoachChess — Stockfish engine manager.
 
-Thin wrapper around python-chess.engine.
-Target: ~3000 Elo with 1 thread and low CPU load (short movetime).
+Now with automatic restart on crash.
 """
 
 from __future__ import annotations
@@ -25,14 +24,6 @@ log = logging.getLogger(__name__)
 
 
 class EngineManager:
-    """
-    Lifecycle:
-        eng = EngineManager()
-        eng.start()
-        move = eng.get_best_move(board)
-        eng.stop()
-    """
-
     def __init__(self, path: Optional[str] = None):
         self.path = path or STOCKFISH_PATH
         self._engine: Optional[chess.engine.SimpleEngine] = None
@@ -53,7 +44,6 @@ class EngineManager:
                 "Install via `brew install stockfish` or set STOCKFISH_PATH."
             ) from e
 
-        # Configure for low load + high strength
         options = {
             "Threads": ENGINE_THREADS,
             "Hash": ENGINE_HASH_MB,
@@ -73,35 +63,59 @@ class EngineManager:
             self._engine = None
             log.info("Engine stopped")
 
+    def _restart(self) -> None:
+        log.warning("Restarting Stockfish after crash...")
+        self.stop()
+        self.start()
+
     def get_best_move(
         self,
         board: chess.Board,
         movetime_ms: Optional[int] = None,
     ) -> Optional[chess.Move]:
-        """
-        Return best move for the given position.
-        Uses time limit to keep CPU load low and response snappy.
-        """
         if self._engine is None:
-            raise RuntimeError("Engine not started. Call start() first.")
+            self.start()
 
         if board.is_game_over():
             return None
 
+        # Safety: never send a board with too few pieces or illegal state
+        if len(board.piece_map()) < 2:
+            log.warning("Board has too few pieces, skipping engine call")
+            return None
+
         limit = chess.engine.Limit(time=(movetime_ms or DEFAULT_MOVETIME_MS) / 1000.0)
-        result = self._engine.play(board, limit)
-        return result.move
+
+        try:
+            result = self._engine.play(board, limit)
+            return result.move
+        except (chess.engine.EngineTerminatedError, chess.engine.EngineError) as e:
+            log.error("Engine error: %s — restarting", e)
+            try:
+                self._restart()
+                # One retry after restart
+                result = self._engine.play(board, limit)
+                return result.move
+            except Exception as e2:
+                log.error("Engine still broken after restart: %s", e2)
+                return None
+        except Exception as e:
+            log.error("Unexpected engine error: %s", e)
+            return None
 
     def analyse(
         self,
         board: chess.Board,
         movetime_ms: int = 100,
     ) -> chess.engine.InfoDict:
-        """Optional deeper analysis (score, PV)."""
         if self._engine is None:
-            raise RuntimeError("Engine not started")
+            self.start()
         limit = chess.engine.Limit(time=movetime_ms / 1000.0)
-        return self._engine.analyse(board, limit)
+        try:
+            return self._engine.analyse(board, limit)
+        except Exception:
+            self._restart()
+            return self._engine.analyse(board, limit)
 
     def __enter__(self) -> "EngineManager":
         self.start()
