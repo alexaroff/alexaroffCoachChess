@@ -56,17 +56,32 @@ class BoardDetector:
     def __init__(self, region: Optional[Region] = None):
         self.region = region
         self._last_orientation: Optional[Orientation] = None
+        self._orientation_locked: bool = False
         self._last_img: Optional[np.ndarray] = None
         self._templates: Optional[Dict[str, np.ndarray]] = None
 
     def set_region(self, region: Region) -> None:
         self.region = region
         self._last_orientation = None
+        self._orientation_locked = False
         self._last_img = None
 
-    def detect_orientation(self, img: Optional[np.ndarray] = None) -> Orientation:
+    def lock_orientation(self) -> None:
+        """Lock current orientation so it is not recomputed on every frame."""
+        self._orientation_locked = True
+
+    def unlock_orientation(self) -> None:
+        """Allow orientation to be recomputed (used by "Переопределить" button)."""
+        self._orientation_locked = False
+
+    def detect_orientation(self, img: Optional[np.ndarray] = None, force: bool = False) -> Orientation:
         if self.region is None:
             raise RuntimeError("Region not set")
+
+        # Respect lock unless forced (manual redetect)
+        if self._orientation_locked and self._last_orientation is not None and not force:
+            return self._last_orientation
+
         if img is None:
             img = capture_region(self.region)
 
@@ -97,10 +112,15 @@ class BoardDetector:
 
         img = capture_region(self.region)
         self._last_img = img
-        orientation = self.detect_orientation(img)
+        orientation = self.detect_orientation(img)  # respects lock
 
         board, confidence, occupied = self._img_to_board(img, orientation)
         fen = board.fen() if board is not None else None
+
+        # Lock orientation after the first reasonably good detection
+        if not self._orientation_locked and occupied >= 10 and confidence > 0.5:
+            self._orientation_locked = True
+            log.info("Orientation locked to '%s'", orientation)
 
         return BoardSnapshot(
             region=self.region,
@@ -154,7 +174,10 @@ class BoardDetector:
                     occupied += 1
 
         avg_conf = float(np.mean(confidences)) if confidences else 0.0
-        board.turn = chess.WHITE
+
+        # CRITICAL FIX: do NOT force turn = WHITE.
+        # Turn is managed by Coach via incremental legal-move reconciliation.
+        # Only clear ephemeral state that we cannot reliably recover from image.
         board.castling_rights = 0
         board.ep_square = None
 
