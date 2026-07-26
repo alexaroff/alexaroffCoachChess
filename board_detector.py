@@ -16,7 +16,7 @@ import chess
 import numpy as np
 from PIL import Image
 
-from tools import Region, capture_region, square_center
+from tools import Region, capture_region
 
 log = logging.getLogger(__name__)
 
@@ -278,22 +278,50 @@ class BoardDetector:
         ry = y - self.region.top
         if not (0 <= rx < self.region.width and 0 <= ry < self.region.height):
             return None
+
+        # Same geometry as _img_to_board
         size = min(self.region.width, self.region.height)
         sq = size // 8
         offset_x = (self.region.width - size) // 2
         offset_y = (self.region.height - size) // 2
+
         col = (rx - offset_x) // sq
         row = (ry - offset_y) // sq
         if not (0 <= col < 8 and 0 <= row < 8):
             return None
+
         if self._last_orientation == "white":
             return chess.square(col, 7 - row)
         return chess.square(7 - col, row)
 
     def square_to_pixel(self, square: chess.Square) -> Optional[Tuple[int, int]]:
+        """
+        Convert chess square → absolute screen pixel (center of the cell).
+        Uses EXACTLY the same size / offset logic as _img_to_board and pixel_to_square.
+        This guarantees the arrow lands on the same cell the detector saw.
+        """
         if self.region is None or self._last_orientation is None:
             return None
-        return square_center(self.region, chess.square_file(square), chess.square_rank(square), self._last_orientation)
+
+        file = chess.square_file(square)
+        rank = chess.square_rank(square)
+
+        # Same geometry as _img_to_board
+        size = min(self.region.width, self.region.height)
+        sq = size // 8
+        offset_x = (self.region.width - size) // 2
+        offset_y = (self.region.height - size) // 2
+
+        if self._last_orientation == "white":
+            col = file
+            row = 7 - rank
+        else:
+            col = 7 - file
+            row = rank
+
+        cx = self.region.left + offset_x + col * sq + sq // 2
+        cy = self.region.top + offset_y + row * sq + sq // 2
+        return cx, cy
 
     @staticmethod
     def _luminance(img: np.ndarray) -> np.ndarray:
