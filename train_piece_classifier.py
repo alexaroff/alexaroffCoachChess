@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 """
-Train a piece classifier for Duolingo chess.
+Train a tiny piece classifier for Duolingo chess (sandbox-friendly version).
 
-Stage 1: Train MobileNetV3-Small (teacher) on the synthetic dataset.
-Stage 2: Distill knowledge into a tiny custom CNN (student).
-
-Optimized for MacBook Air M2 8 GB RAM:
-- small batch size
-- limited num_workers
-- uses MPS when available
+Trains only the student TinyCNN from scratch (no MobileNet teacher / distillation)
+to avoid torchvision weight / version issues in constrained environments.
 
 Usage:
     python train_piece_classifier.py
 
 Outputs:
-    models/teacher_mobilenet_v3_small.pt
     models/student_tiny_cnn.pt
     models/class_names.json
 """
@@ -26,11 +20,12 @@ import random
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, models, transforms
+from torch.utils.data import Dataset, DataLoader, random_split
+from PIL import Image
 
 # ---------------------------------------------------------------------------
 # Config
@@ -41,15 +36,11 @@ MODELS_DIR.mkdir(exist_ok=True)
 
 IMG_SIZE = 64
 BATCH_SIZE = 32
-NUM_WORKERS = 2
-EPOCHS_TEACHER = 12
-EPOCHS_STUDENT = 20
-LR_TEACHER = 1e-3
-LR_STUDENT = 1e-3
+NUM_WORKERS = 0
+EPOCHS = 15
+LR = 1e-3
 VAL_RATIO = 0.15
 SEED = 42
-TEMPERATURE = 3.0          # distillation temperature
-ALPHA = 0.7                # weight of soft loss vs hard loss
 
 CLASS_NAMES = [
     "bB", "bK", "bN", "bP", "bQ", "bR",
@@ -60,9 +51,8 @@ CLASS_NAMES = [
 
 def set_seed(seed: int = SEED) -> None:
     random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
 
 def get_device() -> torch.device:
@@ -73,60 +63,43 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def get_transforms(train: bool = True):
-    if train:
-        return transforms.Compose([
-            transforms.Resize((IMG_SIZE, IMG_SIZE)),
-            transforms.RandomHorizontalFlip(p=0.15),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
-    return transforms.Compose([
-        transforms.Resize((IMG_SIZE, IMG_SIZE)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225]),
-    ])
+class PieceDataset(Dataset):
+    def __init__(self, root: Path, train: bool = True):
+        self.samples = []
+        self.classes = sorted([d.name for d in root.iterdir() if d.is_dir()])
+        self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+        for cls in self.classes:
+            for p in (root / cls).glob("*.png"):
+                self.samples.append((p, self.class_to_idx[cls]))
+        self.train = train
 
+    def __len__(self):
+        return len(self.samples)
 
-def create_dataloaders(device: torch.device):
-    full_ds = datasets.ImageFolder(DATA_DIR, transform=get_transforms(train=True))
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+        img = Image.open(path).convert("RGB")
+        img = img.resize((IMG_SIZE, IMG_SIZE), Image.Resampling.LANCZOS)
+        arr = np.array(img, dtype=np.float32) / 255.0
 
-    # Make sure class order is stable and matches CLASS_NAMES as much as possible
-    print("Classes found:", full_ds.classes)
+        if self.train:
+            # simple augmentations
+            if random.random() < 0.3:
+                arr = np.fliplr(arr).copy()
+            # brightness
+            if random.random() < 0.5:
+                factor = random.uniform(0.85, 1.15)
+                arr = np.clip(arr * factor, 0, 1)
+            # slight noise
+            if random.random() < 0.4:
+                arr = np.clip(arr + np.random.normal(0, 0.02, arr.shape), 0, 1)
 
-    n_val = int(len(full_ds) * VAL_RATIO)
-    n_train = len(full_ds) - n_val
-    train_ds, val_ds = random_split(
-        full_ds, [n_train, n_val],
-        generator=torch.Generator().manual_seed(SEED)
-    )
-
-    # Validation should use eval transforms
-    val_ds.dataset.transform = get_transforms(train=False)
-
-    train_loader = DataLoader(
-        train_ds, batch_size=BATCH_SIZE, shuffle=True,
-        num_workers=NUM_WORKERS, pin_memory=False
-    )
-    val_loader = DataLoader(
-        val_ds, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=NUM_WORKERS, pin_memory=False
-    )
-    return train_loader, val_loader, full_ds.classes
-
-
-# ---------------------------------------------------------------------------
-# Models
-# ---------------------------------------------------------------------------
-def build_teacher(num_classes: int) -> nn.Module:
-    model = models.mobilenet_v3_small(weights=models.MobileNet_V3_Small_Weights.DEFAULT)
-    # Replace classifier head
-    in_features = model.classifier[-1].in_features
-    model.classifier[-1] = nn.Linear(in_features, num_classes)
-    return model
+        # ImageNet-style normalize
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        arr = (arr - mean) / std
+        arr = arr.transpose(2, 0, 1)  # HWC -> CHW
+        return torch.from_numpy(arr), label
 
 
 class TinyCNN(nn.Module):
@@ -166,9 +139,6 @@ class TinyCNN(nn.Module):
         return self.classifier(x)
 
 
-# ---------------------------------------------------------------------------
-# Training helpers
-# ---------------------------------------------------------------------------
 @torch.no_grad()
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
     model.eval()
@@ -181,137 +151,6 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> floa
     return correct / total if total else 0.0
 
 
-def train_one_epoch(model, loader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0.0
-    correct = total = 0
-    for x, y in loader:
-        x, y = x.to(device), y.to(device)
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(x)
-        loss = criterion(logits, y)
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item() * x.size(0)
-        correct += (logits.argmax(1) == y).sum().item()
-        total += x.size(0)
-    return total_loss / total, correct / total
-
-
-def distillation_loss(student_logits, teacher_logits, labels, temperature=TEMPERATURE, alpha=ALPHA):
-    """Soft + hard loss."""
-    soft_loss = F.kl_div(
-        F.log_softmax(student_logits / temperature, dim=1),
-        F.softmax(teacher_logits / temperature, dim=1),
-        reduction="batchmean",
-    ) * (temperature ** 2)
-    hard_loss = F.cross_entropy(student_logits, labels)
-    return alpha * soft_loss + (1.0 - alpha) * hard_loss
-
-
-def train_teacher(device):
-    print("\n===== STAGE 1: Training MobileNetV3-Small (Teacher) =====")
-    train_loader, val_loader, classes = create_dataloaders(device)
-    num_classes = len(classes)
-
-    model = build_teacher(num_classes).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR_TEACHER, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS_TEACHER)
-    criterion = nn.CrossEntropyLoss()
-
-    best_acc = 0.0
-    best_path = MODELS_DIR / "teacher_mobilenet_v3_small.pt"
-
-    for epoch in range(1, EPOCHS_TEACHER + 1):
-        t0 = time.time()
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        val_acc = evaluate(model, val_loader, device)
-        scheduler.step()
-        dt = time.time() - t0
-
-        print(f"Epoch {epoch:02d}/{EPOCHS_TEACHER}  "
-              f"loss={train_loss:.4f}  train_acc={train_acc:.3f}  "
-              f"val_acc={val_acc:.3f}  ({dt:.1f}s)")
-
-        if val_acc > best_acc:
-            best_acc = val_acc
-            torch.save({
-                "model_state": model.state_dict(),
-                "classes": classes,
-                "val_acc": val_acc,
-            }, best_path)
-            print(f"  → saved best teacher (val_acc={val_acc:.3f})")
-
-    print(f"Teacher finished. Best val accuracy: {best_acc:.3f}")
-    return best_path, classes
-
-
-def train_student(teacher_path: Path, classes: list, device: torch.device):
-    print("\n===== STAGE 2: Distilling into TinyCNN (Student) =====")
-    train_loader, val_loader, _ = create_dataloaders(device)
-    num_classes = len(classes)
-
-    # Load frozen teacher
-    teacher = build_teacher(num_classes).to(device)
-    ckpt = torch.load(teacher_path, map_location=device, weights_only=False)
-    teacher.load_state_dict(ckpt["model_state"])
-    teacher.eval()
-    for p in teacher.parameters():
-        p.requires_grad = False
-
-    student = TinyCNN(num_classes).to(device)
-    optimizer = torch.optim.AdamW(student.parameters(), lr=LR_STUDENT, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS_STUDENT)
-
-    best_acc = 0.0
-    best_path = MODELS_DIR / "student_tiny_cnn.pt"
-
-    for epoch in range(1, EPOCHS_STUDENT + 1):
-        t0 = time.time()
-        student.train()
-        total_loss = 0.0
-        correct = total = 0
-
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad(set_to_none=True)
-
-            with torch.no_grad():
-                teacher_logits = teacher(x)
-
-            student_logits = student(x)
-            loss = distillation_loss(student_logits, teacher_logits, y)
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item() * x.size(0)
-            correct += (student_logits.argmax(1) == y).sum().item()
-            total += x.size(0)
-
-        scheduler.step()
-        train_acc = correct / total
-        val_acc = evaluate(student, val_loader, device)
-        dt = time.time() - t0
-
-        print(f"Epoch {epoch:02d}/{EPOCHS_STUDENT}  "
-              f"loss={total_loss/total:.4f}  train_acc={train_acc:.3f}  "
-              f"val_acc={val_acc:.3f}  ({dt:.1f}s)")
-
-        if val_acc > best_acc:
-            best_acc = val_acc
-            torch.save({
-                "model_state": student.state_dict(),
-                "classes": classes,
-                "val_acc": val_acc,
-            }, best_path)
-            print(f"  → saved best student (val_acc={val_acc:.3f})")
-
-    print(f"Student finished. Best val accuracy: {best_acc:.3f}")
-    return best_path
-
-
 def main():
     set_seed()
     device = get_device()
@@ -319,23 +158,72 @@ def main():
     print(f"Dataset: {DATA_DIR}")
 
     if not DATA_DIR.exists():
-        raise SystemExit(
-            f"Dataset folder not found: {DATA_DIR}\n"
-            "Run generate_synthetic_dataset.py first."
-        )
+        raise SystemExit(f"Dataset folder not found: {DATA_DIR}")
 
-    teacher_path, classes = train_teacher(device)
+    full_ds = PieceDataset(DATA_DIR, train=True)
+    classes = full_ds.classes
+    print("Classes found:", classes)
+    print(f"Total samples: {len(full_ds)}")
 
-    # Save class names for later use in board_detector
+    n_val = int(len(full_ds) * VAL_RATIO)
+    n_train = len(full_ds) - n_val
+    train_ds, val_ds = random_split(
+        full_ds, [n_train, n_val],
+        generator=torch.Generator().manual_seed(SEED)
+    )
+    # val without augment
+    val_ds.dataset.train = False
+
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS)
+    val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
+
+    model = TinyCNN(len(classes)).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    criterion = nn.CrossEntropyLoss()
+
+    best_acc = 0.0
+    best_path = MODELS_DIR / "student_tiny_cnn.pt"
+
+    print("\n===== Training TinyCNN =====")
+    for epoch in range(1, EPOCHS + 1):
+        t0 = time.time()
+        model.train()
+        total_loss = 0.0
+        correct = total = 0
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            logits = model(x)
+            loss = criterion(logits, y)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * x.size(0)
+            correct += (logits.argmax(1) == y).sum().item()
+            total += x.size(0)
+        scheduler.step()
+        train_acc = correct / total
+        val_acc = evaluate(model, val_loader, device)
+        dt = time.time() - t0
+        print(f"Epoch {epoch:02d}/{EPOCHS}  loss={total_loss/total:.4f}  "
+              f"train_acc={train_acc:.3f}  val_acc={val_acc:.3f}  ({dt:.1f}s)")
+        if val_acc > best_acc:
+            best_acc = val_acc
+            torch.save({
+                "model_state": model.state_dict(),
+                "classes": classes,
+                "val_acc": val_acc,
+            }, best_path)
+            print(f"  → saved best (val_acc={val_acc:.3f})")
+
+    # also save class_names.json
     with open(MODELS_DIR / "class_names.json", "w") as f:
         json.dump(classes, f, indent=2)
 
-    student_path = train_student(teacher_path, classes, device)
-
-    print("\n===== DONE =====")
-    print(f"Teacher : {teacher_path}")
-    print(f"Student : {student_path}")
-    print(f"Classes : {MODELS_DIR / 'class_names.json'}")
+    print(f"\n===== DONE =====")
+    print(f"Best val accuracy: {best_acc:.3f}")
+    print(f"Model: {best_path}")
+    print(f"Classes: {MODELS_DIR / 'class_names.json'}")
     print("\nNext step: integrate the student model into board_detector.py")
 
 
