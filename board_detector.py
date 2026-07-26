@@ -57,6 +57,7 @@ class BoardDetector:
         self.region = region
         self._last_orientation: Optional[Orientation] = None
         self._orientation_locked: bool = False
+        self._forced_start_once: bool = False   # force classic FEN at most once
         self._last_img: Optional[np.ndarray] = None
         self._templates: Optional[Dict[str, np.ndarray]] = None
 
@@ -64,6 +65,7 @@ class BoardDetector:
         self.region = region
         self._last_orientation = None
         self._orientation_locked = False
+        self._forced_start_once = False
         self._last_img = None
 
     def lock_orientation(self) -> None:
@@ -181,11 +183,19 @@ class BoardDetector:
         board.castling_rights = 0
         board.ep_square = None
 
-        if occupied >= 30 and self._looks_like_starting_position(board):
-            log.info("Starting position detected → forcing classic FEN")
+        # Force classic starting position ONLY ONCE (the first time we see it).
+        # Previously this ran every frame → after noisy detection the board
+        # was constantly reset to the start and the arrow jumped back to e2e4 / top.
+        if (
+            not self._forced_start_once
+            and occupied >= 30
+            and self._looks_like_starting_position(board)
+        ):
+            log.info("Starting position detected → forcing classic FEN (once)")
             board = chess.Board()
             avg_conf = max(avg_conf, 0.95)
             occupied = 32
+            self._forced_start_once = True
 
         return board, avg_conf, occupied
 
