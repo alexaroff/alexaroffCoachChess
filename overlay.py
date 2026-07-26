@@ -1,14 +1,13 @@
 """
 alexaroffCoachChess — simple arrow overlay for Coach mode.
 
-Transparent always-on-top window that draws a green/cyan arrow
+Transparent always-on-top window that draws an arrow
 from the best-move origin square to the destination square.
 
-Note on click-through (macOS):
-  Tk's -disabled is only a best-effort. True mouse event passthrough
-  on modern macOS usually requires AppKit (NSWindow.ignoresMouseEvents).
-  If clicks are blocked while the arrow is visible, the overlay is
-  interfering — this is the first thing to verify in a live game.
+Transparency note (macOS + Homebrew Python):
+  Full systemTransparent often fails and produces a solid black window.
+  We therefore use a low window alpha + bright arrow as a reliable compromise.
+  True click-through still requires AppKit (NSWindow.ignoresMouseEvents).
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
 
 
 DEFAULT_ARROW_COLOR = _rgb_to_hex(ARROW_COLOR)
-DEFAULT_ARROW_WIDTH = OVERLAY_LINE_WIDTH
+DEFAULT_ARROW_WIDTH = max(6, OVERLAY_LINE_WIDTH)
 
 
 class ArrowOverlay:
@@ -37,7 +36,6 @@ class ArrowOverlay:
 
     def set_region(self, region: Region) -> None:
         self._region = region
-        # Recreate window if region changed
         if self._root is not None:
             self.destroy()
         self._ensure_window()
@@ -48,7 +46,6 @@ class ArrowOverlay:
         if self._region is None:
             return
 
-        # Create a borderless transparent window exactly over the board
         self._root = tk.Toplevel()
         self._root.title("Coach Arrow")
         self._root.geometry(
@@ -57,29 +54,39 @@ class ArrowOverlay:
         self._root.overrideredirect(True)
         self._root.attributes("-topmost", True)
 
-        # Transparency (macOS prefers systemTransparent)
+        # --- Transparency strategy ---
+        # 1. Try the modern transparent path
+        # 2. Fallback to low alpha (this is what actually works on most
+        #    Homebrew Python 3.12 + recent macOS setups)
+        transparent_ok = False
         try:
             self._root.attributes("-transparent", True)
             self._root.config(bg="systemTransparent")
+            transparent_ok = True
         except Exception:
+            pass
+
+        if not transparent_ok:
+            # Reliable fallback: almost transparent window + bright arrow
             self._root.config(bg="black")
             try:
-                self._root.attributes("-alpha", 0.01)  # almost invisible background
+                self._root.attributes("-alpha", 0.18)
             except Exception:
                 pass
+
+        canvas_bg = "systemTransparent" if transparent_ok else "black"
 
         self._canvas = tk.Canvas(
             self._root,
             width=self._region.width,
             height=self._region.height,
             highlightthickness=0,
-            bg="systemTransparent",
+            bg=canvas_bg,
+            bd=0,
         )
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Best-effort click-through.
-        # On Windows -disabled works well.
-        # On macOS it is unreliable; real solution needs AppKit.
+        # Best-effort click-through (unreliable on macOS without AppKit)
         try:
             self._root.attributes("-disabled", True)
         except Exception:
@@ -95,9 +102,6 @@ class ArrowOverlay:
         color: Optional[str] = None,
         width: Optional[int] = None,
     ) -> None:
-        """
-        from_xy / to_xy — absolute screen coordinates of square centers.
-        """
         if self._region is None:
             return
 
@@ -108,7 +112,7 @@ class ArrowOverlay:
         color = color or DEFAULT_ARROW_COLOR
         width = width or DEFAULT_ARROW_WIDTH
 
-        # Convert absolute → relative to the overlay window
+        # Absolute → relative to overlay
         x1 = from_xy[0] - self._region.left
         y1 = from_xy[1] - self._region.top
         x2 = to_xy[0] - self._region.left
@@ -116,20 +120,20 @@ class ArrowOverlay:
 
         self._canvas.delete("all")
 
-        # Main line with arrow head
+        # Thick bright arrow so it stays visible even with low window alpha
         self._canvas.create_line(
             x1, y1, x2, y2,
             fill=color,
             width=width,
             arrow=tk.LAST,
-            arrowshape=(18, 22, 8),
+            arrowshape=(20, 24, 9),
             capstyle=tk.ROUND,
             smooth=True,
             tags="arrow",
         )
 
-        # Small circle at origin
-        r = max(6, width + 1)
+        # Origin marker
+        r = max(7, width + 2)
         self._canvas.create_oval(
             x1 - r, y1 - r, x1 + r, y1 + r,
             fill=color,
