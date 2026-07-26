@@ -268,6 +268,14 @@ class BoardDetector:
         return self._classify_with_templates(sq)
 
     def _classify_with_nn(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
+        """
+        Temporary conservative mode (26 Jul 2026):
+        NN is trusted ONLY for empty vs occupied + color.
+        Piece TYPE is deliberately forced to PAWN so that coach.reconcile
+        can recover the real type via legal-move matching.
+        This is needed because the model was trained on clean synthetic
+        templates and currently misclassifies many real Duolingo squares.
+        """
         # Resize to 64x64
         pil = Image.fromarray(sq.astype(np.uint8) if sq.dtype != np.uint8 else sq)
         resized = pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS)
@@ -289,8 +297,16 @@ class BoardDetector:
 
         if name == "empty":
             return None, conf
-        if name in _PIECE_FROM_NAME:
-            return _PIECE_FROM_NAME[name], conf
+
+        # TEMPORARY (26 Jul 2026): trust NN only for color + occupancy.
+        # Force type = PAWN so coach.reconcile can recover real types
+        # via legal-move matching. Needed because the model was trained
+        # purely on synthetic templates and misclassifies many real squares.
+        if name.startswith("w"):
+            return chess.Piece(chess.PAWN, chess.WHITE), min(conf, 0.55)
+        if name.startswith("b"):
+            return chess.Piece(chess.PAWN, chess.BLACK), min(conf, 0.55)
+
         return None, 0.0
 
     def _classify_with_templates(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
