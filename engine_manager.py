@@ -79,7 +79,17 @@ class EngineManager:
         if board.is_game_over():
             return None
 
-        # Safety: never send a board with too few pieces or illegal state
+        # Safety: never send a board that is missing a king.
+        # Weak type classification can turn a king into a pawn;
+        # Stockfish then rejects the position and we used to fail silently.
+        if board.king(chess.WHITE) is None or board.king(chess.BLACK) is None:
+            log.warning(
+                "Missing king(s) on board (white=%s, black=%s) — skipping engine call",
+                board.king(chess.WHITE) is not None,
+                board.king(chess.BLACK) is not None,
+            )
+            return None
+
         if len(board.piece_map()) < 2:
             log.warning("Board has too few pieces, skipping engine call")
             return None
