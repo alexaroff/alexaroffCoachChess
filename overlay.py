@@ -1,8 +1,14 @@
 """
 alexaroffCoachChess — simple arrow overlay for Coach mode.
 
-Transparent always-on-top window that draws a green arrow
+Transparent always-on-top window that draws a green/cyan arrow
 from the best-move origin square to the destination square.
+
+Note on click-through (macOS):
+  Tk's -disabled is only a best-effort. True mouse event passthrough
+  on modern macOS usually requires AppKit (NSWindow.ignoresMouseEvents).
+  If clicks are blocked while the arrow is visible, the overlay is
+  interfering — this is the first thing to verify in a live game.
 """
 
 from __future__ import annotations
@@ -11,6 +17,15 @@ import tkinter as tk
 from typing import Optional, Tuple
 
 from tools import Region
+from config import ARROW_COLOR, OVERLAY_LINE_WIDTH
+
+
+def _rgb_to_hex(rgb: Tuple[int, int, int]) -> str:
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+DEFAULT_ARROW_COLOR = _rgb_to_hex(ARROW_COLOR)
+DEFAULT_ARROW_WIDTH = OVERLAY_LINE_WIDTH
 
 
 class ArrowOverlay:
@@ -22,6 +37,9 @@ class ArrowOverlay:
 
     def set_region(self, region: Region) -> None:
         self._region = region
+        # Recreate window if region changed
+        if self._root is not None:
+            self.destroy()
         self._ensure_window()
 
     def _ensure_window(self) -> None:
@@ -38,14 +56,17 @@ class ArrowOverlay:
         )
         self._root.overrideredirect(True)
         self._root.attributes("-topmost", True)
-        self._root.attributes("-transparent", True)
-        self._root.config(bg="systemTransparent")
 
+        # Transparency (macOS prefers systemTransparent)
         try:
-            # macOS specific transparency
-            self._root.wm_attributes("-transparent", True)
+            self._root.attributes("-transparent", True)
+            self._root.config(bg="systemTransparent")
         except Exception:
-            pass
+            self._root.config(bg="black")
+            try:
+                self._root.attributes("-alpha", 0.01)  # almost invisible background
+            except Exception:
+                pass
 
         self._canvas = tk.Canvas(
             self._root,
@@ -56,7 +77,9 @@ class ArrowOverlay:
         )
         self._canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Make clicks pass through (best effort)
+        # Best-effort click-through.
+        # On Windows -disabled works well.
+        # On macOS it is unreliable; real solution needs AppKit.
         try:
             self._root.attributes("-disabled", True)
         except Exception:
@@ -69,8 +92,8 @@ class ArrowOverlay:
         self,
         from_xy: Tuple[int, int],
         to_xy: Tuple[int, int],
-        color: str = "#00FF88",
-        width: int = 6,
+        color: Optional[str] = None,
+        width: Optional[int] = None,
     ) -> None:
         """
         from_xy / to_xy — absolute screen coordinates of square centers.
@@ -82,6 +105,9 @@ class ArrowOverlay:
         if self._root is None or self._canvas is None:
             return
 
+        color = color or DEFAULT_ARROW_COLOR
+        width = width or DEFAULT_ARROW_WIDTH
+
         # Convert absolute → relative to the overlay window
         x1 = from_xy[0] - self._region.left
         y1 = from_xy[1] - self._region.top
@@ -90,7 +116,7 @@ class ArrowOverlay:
 
         self._canvas.delete("all")
 
-        # Main line
+        # Main line with arrow head
         self._canvas.create_line(
             x1, y1, x2, y2,
             fill=color,
@@ -103,7 +129,7 @@ class ArrowOverlay:
         )
 
         # Small circle at origin
-        r = 7
+        r = max(6, width + 1)
         self._canvas.create_oval(
             x1 - r, y1 - r, x1 + r, y1 + r,
             fill=color,
