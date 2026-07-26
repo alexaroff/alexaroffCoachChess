@@ -260,33 +260,21 @@ class BoardDetector:
         if sq.size == 0 or sq.shape[0] < 12:
             return None, 0.0
 
-        # Prefer NN if available
         if self._nn_model is not None and self._nn_classes is not None:
             return self._classify_with_nn(sq)
 
-        # Fallback to old template logic
         return self._classify_with_templates(sq)
 
     def _classify_with_nn(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
-        """
-        Temporary conservative mode (26 Jul 2026):
-        NN is trusted ONLY for empty vs occupied + color.
-        Piece TYPE is deliberately forced to PAWN so that coach.reconcile
-        can recover the real type via legal-move matching.
-        This is needed because the model was trained on clean synthetic
-        templates and currently misclassifies many real Duolingo squares.
-        """
-        # Resize to 64x64
         pil = Image.fromarray(sq.astype(np.uint8) if sq.dtype != np.uint8 else sq)
         resized = pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS)
         arr = np.array(resized, dtype=np.float32) / 255.0
 
-        # Normalize ImageNet style
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         arr = (arr - mean) / std
-        arr = arr.transpose(2, 0, 1)  # CHW
-        tensor = torch.from_numpy(arr).unsqueeze(0)  # 1x3x64x64
+        arr = arr.transpose(2, 0, 1)
+        tensor = torch.from_numpy(arr).unsqueeze(0)
 
         with torch.no_grad():
             logits = self._nn_model(tensor)
@@ -298,14 +286,14 @@ class BoardDetector:
         if name == "empty":
             return None, conf
 
-        # TEMPORARY (26 Jul 2026): trust NN only for color + occupancy.
-        # Force type = PAWN so coach.reconcile can recover real types
-        # via legal-move matching. Needed because the model was trained
-        # purely on synthetic templates and misclassifies many real squares.
-        if name.startswith("w"):
-            return chess.Piece(chess.PAWN, chess.WHITE), min(conf, 0.55)
-        if name.startswith("b"):
-            return chess.Piece(chess.PAWN, chess.BLACK), min(conf, 0.55)
+        # Protect kings at all costs — otherwise Stockfish refuses the position.
+        if name in ("wK", "bK") and name in _PIECE_FROM_NAME:
+            return _PIECE_FROM_NAME[name], conf
+
+        # For other pieces: keep NN type but with capped confidence
+        # so reconcile can still override via legal moves when needed.
+        if name in _PIECE_FROM_NAME:
+            return _PIECE_FROM_NAME[name], min(conf, 0.65)
 
         return None, 0.0
 
