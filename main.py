@@ -145,7 +145,7 @@ class App(tk.Tk):
 
         # Immediate orientation + first scan
         try:
-            orientation = self.detector.detect_orientation()
+            orientation = self.detector.detect_orientation(force=True)
             self._update_orientation_label(orientation)
             self._scan_once()
             self.status_var.set(f"Область задана · ориентация: {orientation}")
@@ -159,7 +159,10 @@ class App(tk.Tk):
             messagebox.showinfo("Нет области", "Сначала выберите область доски.")
             return
         try:
-            orientation = self.detector.detect_orientation()
+            # Force unlock + recompute
+            self.detector.unlock_orientation()
+            orientation = self.detector.detect_orientation(force=True)
+            self.detector.lock_orientation()
             self._update_orientation_label(orientation)
             self.status_var.set(f"Ориентация переопределена: {orientation}")
         except Exception as e:
