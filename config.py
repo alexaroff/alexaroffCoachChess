@@ -14,7 +14,7 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 APP_ID = "com.alexaroff.coachchess"
 
 # ---------------------------------------------------------------------------
@@ -52,11 +52,11 @@ MAX_SQUARE_PX = 200
 # ---------------------------------------------------------------------------
 # Overlay / Visualization (Stage 3)
 # ---------------------------------------------------------------------------
-ARROW_COLOR = (0, 180, 255)        # RGB
-ARROW_ALPHA = 0.75
+ARROW_COLOR = (0, 180, 255)        # RGB — cyan-ish, used by overlay.py
+ARROW_ALPHA = 0.75                 # reserved (Tk transparency is limited)
 HIGHLIGHT_FROM_COLOR = (255, 200, 0)
 HIGHLIGHT_TO_COLOR = (0, 220, 120)
-OVERLAY_LINE_WIDTH = 4
+OVERLAY_LINE_WIDTH = 5             # slightly thicker for visibility
 
 # ---------------------------------------------------------------------------
 # Modes
