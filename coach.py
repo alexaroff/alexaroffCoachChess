@@ -133,17 +133,34 @@ class Coach:
 
         no_move_score = self._color_similarity(prev, detected)
 
-        if best_board is not None and best_score >= 30.0 and best_score >= no_move_score:
-            log.info("Reconciled via legal move (color-score=%.1f)", best_score)
+        # Raised threshold + require clear improvement over "no move".
+        # With type-bonus the theoretical max is ~96, 48 is a solid bar.
+        if best_board is not None and best_score >= 48.0 and best_score > no_move_score + 1.5:
+            log.info("Reconciled via legal move (score=%.1f)", best_score)
             return best_board
 
-        if no_move_score >= 31.0:
+        if no_move_score >= 50.0:
             return prev
 
+        # CRITICAL: on fallback keep the turn (and castling rights) from prev.
+        # Never let the detector's default WHITE turn reset the side to move.
+        detected.turn = prev.turn
+        detected.castling_rights = prev.castling_rights
+        detected.ep_square = None
+        log.warning(
+            "Reconcile weak (best=%.1f, no_move=%.1f) → using detected pieces, preserving turn=%s",
+            best_score,
+            no_move_score,
+            "white" if prev.turn else "black",
+        )
         return detected
 
     @staticmethod
     def _color_similarity(a: chess.Board, b: chess.Board) -> float:
+        """
+        Occupancy + color match (1.0) + type match bonus (0.5).
+        Max theoretical ≈ 96.
+        """
         score = 0.0
         for sq in chess.SQUARES:
             pa = a.piece_at(sq)
@@ -152,6 +169,8 @@ class Coach:
                 score += 1.0
             elif pa is not None and pb is not None and pa.color == pb.color:
                 score += 1.0
+                if pa.piece_type == pb.piece_type:
+                    score += 0.5
         return score
 
     def _show_move(self, snapshot: BoardSnapshot, move: chess.Move) -> None:
