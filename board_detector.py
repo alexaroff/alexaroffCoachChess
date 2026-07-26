@@ -230,11 +230,15 @@ class BoardDetector:
         mean_lum = float(np.mean(gray))
         std_lum = float(np.std(gray))
 
-        # Empty — very flat on Duolingo
-        if std_lum < 13.0:
+        # Empty — very flat on Duolingo dark theme
+        if std_lum < 14.0:
             return None, 0.95
 
-        is_white = mean_lum > 98.0
+        # Tuned for the current Duolingo dark theme from high-quality screenshot.
+        # White pieces (even on dark squares) tend to sit above ~65-70;
+        # black pieces stay lower. Previous 98 was too strict and turned
+        # many white pieces into "black".
+        is_white = mean_lum > 65.0
         color = chess.WHITE if is_white else chess.BLACK
         color_prefix = "w" if is_white else "b"
 
@@ -260,7 +264,8 @@ class BoardDetector:
                     best_score = score
                     best_name = name
 
-            if best_name and best_score >= 0.58 and best_name in _PIECE_FROM_NAME:
+            # Slightly lower threshold so kings/queens are less often forced to pawn
+            if best_name and best_score >= 0.55 and best_name in _PIECE_FROM_NAME:
                 return _PIECE_FROM_NAME[best_name], float(best_score)
 
         return chess.Piece(piece_type, color), type_conf
