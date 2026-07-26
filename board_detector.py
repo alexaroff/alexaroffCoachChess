@@ -1,12 +1,13 @@
 """
-alexaroffCoachChess — board detection (hybrid-focused)
+alexaroffCoachChess — board detection (hybrid-focused + NN classifier)
 
-Priority: very reliable occupancy + color.
-Piece type is secondary (recovered by coach.reconcile).
+Priority: very reliable occupancy + color + piece type via TinyCNN.
+Piece type is still secondary (recovered by coach.reconcile if needed).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Literal, Optional, Tuple, List, Dict
 import chess
 import numpy as np
 from PIL import Image
+import torch
+import torch.nn as nn
 
 from tools import Region, capture_region
 
@@ -23,6 +26,7 @@ log = logging.getLogger(__name__)
 Orientation = Literal["white", "black"]
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+MODELS_DIR = Path(__file__).resolve().parent / "models"
 TEMPLATE_SIZE = 64
 
 
@@ -52,14 +56,72 @@ _PIECE_FROM_NAME: Dict[str, chess.Piece] = {
 }
 
 
+class TinyCNN(nn.Module):
+    """Very small CNN tailored for 64x64 chess pieces. Must match train script."""
+
+    def __init__(self, num_classes: int = 13):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 24, 3, padding=1, bias=False),
+            nn.BatchNorm2d(24),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(24, 48, 3, padding=1, bias=False),
+            nn.BatchNorm2d(48),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(48, 72, 3, padding=1, bias=False),
+            nn.BatchNorm2d(72),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2),
+            nn.Conv2d(72, 96, 3, padding=1, bias=False),
+            nn.BatchNorm2d(96),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(0.25),
+            nn.Linear(96, num_classes),
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        return self.classifier(x)
+
+
 class BoardDetector:
     def __init__(self, region: Optional[Region] = None):
         self.region = region
         self._last_orientation: Optional[Orientation] = None
         self._orientation_locked: bool = False
-        self._forced_start_once: bool = False   # force classic FEN at most once
+        self._forced_start_once: bool = False
         self._last_img: Optional[np.ndarray] = None
         self._templates: Optional[Dict[str, np.ndarray]] = None
+        self._nn_model: Optional[nn.Module] = None
+        self._nn_classes: Optional[List[str]] = None
+        self._nn_device = torch.device("cpu")
+        self._load_nn()
+
+    def _load_nn(self) -> None:
+        model_path = MODELS_DIR / "student_tiny_cnn.pt"
+        classes_path = MODELS_DIR / "class_names.json"
+        if not model_path.exists() or not classes_path.exists():
+            log.warning("NN model not found at %s — falling back to templates", model_path)
+            return
+        try:
+            with open(classes_path) as f:
+                self._nn_classes = json.load(f)
+            num_classes = len(self._nn_classes)
+            model = TinyCNN(num_classes)
+            ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
+            model.load_state_dict(ckpt["model_state"])
+            model.eval()
+            self._nn_model = model
+            log.info("Loaded TinyCNN with %d classes, val_acc=%.3f", num_classes, ckpt.get("val_acc", 0))
+        except Exception as e:
+            log.error("Failed to load NN model: %s", e)
+            self._nn_model = None
 
     def set_region(self, region: Region) -> None:
         self.region = region
@@ -69,18 +131,15 @@ class BoardDetector:
         self._last_img = None
 
     def lock_orientation(self) -> None:
-        """Lock current orientation so it is not recomputed on every frame."""
         self._orientation_locked = True
 
     def unlock_orientation(self) -> None:
-        """Allow orientation to be recomputed (used by "Переопределить" button)."""
         self._orientation_locked = False
 
     def detect_orientation(self, img: Optional[np.ndarray] = None, force: bool = False) -> Orientation:
         if self.region is None:
             raise RuntimeError("Region not set")
 
-        # Respect lock unless forced (manual redetect)
         if self._orientation_locked and self._last_orientation is not None and not force:
             return self._last_orientation
 
@@ -114,12 +173,11 @@ class BoardDetector:
 
         img = capture_region(self.region)
         self._last_img = img
-        orientation = self.detect_orientation(img)  # respects lock
+        orientation = self.detect_orientation(img)
 
         board, confidence, occupied = self._img_to_board(img, orientation)
         fen = board.fen() if board is not None else None
 
-        # Lock orientation after the first reasonably good detection
         if not self._orientation_locked and occupied >= 10 and confidence > 0.5:
             self._orientation_locked = True
             log.info("Orientation locked to '%s'", orientation)
@@ -148,8 +206,6 @@ class BoardDetector:
         offset_x = (w - size) // 2
         offset_y = (h - size) // 2
 
-        self._ensure_templates()
-
         board = chess.Board(None)
         confidences: List[float] = []
         occupied = 0
@@ -177,15 +233,9 @@ class BoardDetector:
 
         avg_conf = float(np.mean(confidences)) if confidences else 0.0
 
-        # CRITICAL FIX: do NOT force turn = WHITE.
-        # Turn is managed by Coach via incremental legal-move reconciliation.
-        # Only clear ephemeral state that we cannot reliably recover from image.
         board.castling_rights = 0
         board.ep_square = None
 
-        # Force classic starting position ONLY ONCE (the first time we see it).
-        # Previously this ran every frame → after noisy detection the board
-        # was constantly reset to the start and the arrow jumped back to e2e4 / top.
         if (
             not self._forced_start_once
             and occupied >= 30
@@ -206,31 +256,44 @@ class BoardDetector:
         r8 = sum(1 for f in range(8) if board.piece_at(chess.square(f, 7)))
         return r1 == 8 and r2 == 8 and r7 == 8 and r8 == 8
 
-    def _ensure_templates(self) -> None:
-        if self._templates is not None:
-            return
-        self._templates = {}
-        if not TEMPLATES_DIR.exists():
-            return
-        for path in TEMPLATES_DIR.glob("*.png"):
-            name = path.stem
-            if name.startswith("empty"):
-                continue
-            img = Image.open(path).convert("RGB")
-            arr = np.array(img, dtype=np.float32) / 255.0
-            if arr.shape[0] != TEMPLATE_SIZE or arr.shape[1] != TEMPLATE_SIZE:
-                arr = np.array(img.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS), dtype=np.float32) / 255.0
-            self._templates[name] = arr
-        log.info("Loaded %d templates", len(self._templates))
-
     def _classify_square(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
-        """
-        Focus: reliable empty vs occupied + color.
-        Type is best-effort (coach will fix via legal moves).
-        """
         if sq.size == 0 or sq.shape[0] < 12:
             return None, 0.0
 
+        # Prefer NN if available
+        if self._nn_model is not None and self._nn_classes is not None:
+            return self._classify_with_nn(sq)
+
+        # Fallback to old template logic
+        return self._classify_with_templates(sq)
+
+    def _classify_with_nn(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
+        # Resize to 64x64
+        pil = Image.fromarray(sq.astype(np.uint8) if sq.dtype != np.uint8 else sq)
+        resized = pil.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS)
+        arr = np.array(resized, dtype=np.float32) / 255.0
+
+        # Normalize ImageNet style
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        arr = (arr - mean) / std
+        arr = arr.transpose(2, 0, 1)  # CHW
+        tensor = torch.from_numpy(arr).unsqueeze(0)  # 1x3x64x64
+
+        with torch.no_grad():
+            logits = self._nn_model(tensor)
+            probs = torch.softmax(logits, dim=1)[0]
+            conf, idx = probs.max(0)
+            conf = float(conf)
+            name = self._nn_classes[int(idx)]
+
+        if name == "empty":
+            return None, conf
+        if name in _PIECE_FROM_NAME:
+            return _PIECE_FROM_NAME[name], conf
+        return None, 0.0
+
+    def _classify_with_templates(self, sq: np.ndarray) -> Tuple[Optional[chess.Piece], float]:
         margin = max(2, int(sq.shape[0] * 0.17))
         core = sq[margin:-margin, margin:-margin]
         if core.size < 16:
@@ -240,19 +303,13 @@ class BoardDetector:
         mean_lum = float(np.mean(gray))
         std_lum = float(np.std(gray))
 
-        # Empty — very flat on Duolingo dark theme
         if std_lum < 14.0:
             return None, 0.95
 
-        # Tuned for the current Duolingo dark theme from high-quality screenshot.
-        # White pieces (even on dark squares) tend to sit above ~65-70;
-        # black pieces stay lower. Previous 98 was too strict and turned
-        # many white pieces into "black".
         is_white = mean_lum > 65.0
         color = chess.WHITE if is_white else chess.BLACK
         color_prefix = "w" if is_white else "b"
 
-        # Try to get type, but we do not trust it strongly
         self._ensure_templates()
         piece_type = chess.PAWN
         type_conf = 0.40
@@ -274,11 +331,27 @@ class BoardDetector:
                     best_score = score
                     best_name = name
 
-            # Slightly lower threshold so kings/queens are less often forced to pawn
             if best_name and best_score >= 0.55 and best_name in _PIECE_FROM_NAME:
                 return _PIECE_FROM_NAME[best_name], float(best_score)
 
         return chess.Piece(piece_type, color), type_conf
+
+    def _ensure_templates(self) -> None:
+        if self._templates is not None:
+            return
+        self._templates = {}
+        if not TEMPLATES_DIR.exists():
+            return
+        for path in TEMPLATES_DIR.glob("*.png"):
+            name = path.stem
+            if name.startswith("empty"):
+                continue
+            img = Image.open(path).convert("RGB")
+            arr = np.array(img, dtype=np.float32) / 255.0
+            if arr.shape[0] != TEMPLATE_SIZE or arr.shape[1] != TEMPLATE_SIZE:
+                arr = np.array(img.resize((TEMPLATE_SIZE, TEMPLATE_SIZE), Image.Resampling.LANCZOS), dtype=np.float32) / 255.0
+            self._templates[name] = arr
+        log.info("Loaded %d templates", len(self._templates))
 
     @staticmethod
     def _normalize(arr: np.ndarray) -> np.ndarray:
@@ -294,7 +367,6 @@ class BoardDetector:
         if not (0 <= rx < self.region.width and 0 <= ry < self.region.height):
             return None
 
-        # Same geometry as _img_to_board
         size = min(self.region.width, self.region.height)
         sq = size // 8
         offset_x = (self.region.width - size) // 2
@@ -310,18 +382,12 @@ class BoardDetector:
         return chess.square(7 - col, row)
 
     def square_to_pixel(self, square: chess.Square) -> Optional[Tuple[int, int]]:
-        """
-        Convert chess square → absolute screen pixel (center of the cell).
-        Uses EXACTLY the same size / offset logic as _img_to_board and pixel_to_square.
-        This guarantees the arrow lands on the same cell the detector saw.
-        """
         if self.region is None or self._last_orientation is None:
             return None
 
         file = chess.square_file(square)
         rank = chess.square_rank(square)
 
-        # Same geometry as _img_to_board
         size = min(self.region.width, self.region.height)
         sq = size // 8
         offset_x = (self.region.width - size) // 2
