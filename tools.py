@@ -121,16 +121,3 @@ def select_region_interactive() -> Optional[Region]:
     region = Region(left=left, top=top, width=width, height=height)
     print(f"\nОбласть выбрана: {region}")
     return region
-
-
-def square_center(region: Region, file: int, rank: int, orientation: str = "white") -> Tuple[int, int]:
-    sq = region.width // 8
-    if orientation == "white":
-        col = file
-        row = 7 - rank
-    else:
-        col = 7 - file
-        row = rank
-    cx = region.left + col * sq + sq // 2
-    cy = region.top + row * sq + sq // 2
-    return cx, cy
