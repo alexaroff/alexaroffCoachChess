@@ -3,5 +3,7 @@ mss>=9.0
 Pillow>=10.0
 numpy>=1.24
 pyautogui>=0.9.54
+torch>=2.0
+# torchvision optional (used only if full teacher training desired)
 # opencv-python>=4.8  # optional for Stage 2+, install later if needed
 # pynput>=1.7  # alternative to pyautogui for macOS if needed
