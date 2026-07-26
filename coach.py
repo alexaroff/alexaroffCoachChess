@@ -19,6 +19,11 @@ from overlay import ArrowOverlay
 
 log = logging.getLogger(__name__)
 
+# After this many consecutive weak reconciles we force a turn flip.
+# Heuristic: if the pixel board keeps changing but we cannot match any legal move,
+# a real move almost certainly happened and the detector just failed type matching.
+WEAK_RECONCILE_FLIP_THRESHOLD = 2
+
 
 class Coach:
     def __init__(self, detector: BoardDetector, engine: EngineManager):
@@ -32,6 +37,7 @@ class Coach:
         self._last_fen: Optional[str] = None
         self._last_board: Optional[chess.Board] = None
         self._last_advice: Optional[Advice] = None
+        self._weak_reconcile_streak: int = 0
 
     def set_mode(self, mode: str) -> None:
         if mode not in (MODE_COACH, MODE_AUTO):
@@ -47,6 +53,7 @@ class Coach:
         self._running = True
         self._last_fen = None
         self._last_board = None
+        self._weak_reconcile_streak = 0
 
         # Give overlay the current region
         self.overlay.set_region(self.detector.region)
@@ -113,11 +120,13 @@ class Coach:
 
     def _reconcile(self, detected: chess.Board) -> Optional[chess.Board]:
         if self._last_board is None:
+            self._weak_reconcile_streak = 0
             return detected
 
         prev = self._last_board
 
         if detected.piece_map() == prev.piece_map():
+            self._weak_reconcile_streak = 0
             return prev
 
         best_board = None
@@ -133,26 +142,48 @@ class Coach:
 
         no_move_score = self._color_similarity(prev, detected)
 
-        # Raised threshold + require clear improvement over "no move".
-        # With type-bonus the theoretical max is ~96, 48 is a solid bar.
+        # Good legal move found
         if best_board is not None and best_score >= 48.0 and best_score > no_move_score + 1.5:
+            self._weak_reconcile_streak = 0
             log.info("Reconciled via legal move (score=%.1f)", best_score)
             return best_board
 
+        # Position looks unchanged → keep previous (including turn)
         if no_move_score >= 50.0:
+            self._weak_reconcile_streak = 0
             return prev
 
-        # CRITICAL: on fallback keep the turn (and castling rights) from prev.
-        # Never let the detector's default WHITE turn reset the side to move.
+        # --- Weak fallback path ---
+        self._weak_reconcile_streak += 1
+
+        # Default: preserve turn (safe when the change was just noise)
         detected.turn = prev.turn
         detected.castling_rights = prev.castling_rights
         detected.ep_square = None
-        log.warning(
-            "Reconcile weak (best=%.1f, no_move=%.1f) → using detected pieces, preserving turn=%s",
-            best_score,
-            no_move_score,
-            "white" if prev.turn else "black",
-        )
+
+        if self._weak_reconcile_streak >= WEAK_RECONCILE_FLIP_THRESHOLD:
+            # Pixels keep changing but we cannot match any legal move.
+            # Almost certainly a real move happened and type classification failed.
+            # Force the turn to flip so we do not stay stuck on the wrong side.
+            detected.turn = not prev.turn
+            log.warning(
+                "Reconcile weak ×%d (best=%.1f, no_move=%.1f) → FORCED turn flip to %s",
+                self._weak_reconcile_streak,
+                best_score,
+                no_move_score,
+                "white" if detected.turn else "black",
+            )
+            # Reset streak after the forced flip so we don't flip every subsequent frame
+            self._weak_reconcile_streak = 0
+        else:
+            log.warning(
+                "Reconcile weak ×%d (best=%.1f, no_move=%.1f) → preserving turn=%s",
+                self._weak_reconcile_streak,
+                best_score,
+                no_move_score,
+                "white" if prev.turn else "black",
+            )
+
         return detected
 
     @staticmethod
