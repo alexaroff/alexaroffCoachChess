@@ -14,13 +14,14 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.4.0-dev"
 APP_ID = "com.alexaroff.coachchess"
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
 
 # Stockfish binary. Prefer env var, then common Homebrew locations.
 _STOCKFISH_CANDIDATES = [
@@ -32,40 +33,24 @@ _STOCKFISH_CANDIDATES = [
 STOCKFISH_PATH = next((p for p in _STOCKFISH_CANDIDATES if p and Path(p).exists()), "stockfish")
 
 # ---------------------------------------------------------------------------
-# Engine (target ~3000 Elo, 1 thread, low CPU)
+# Engine (full strength by default)
 # ---------------------------------------------------------------------------
 ENGINE_THREADS = 1
-ENGINE_HASH_MB = 64
-# Prefer time limit over skill level for consistent strength under low load.
-DEFAULT_MOVETIME_MS = 150          # ~150–300 ms → strong but responsive
-MAX_MOVETIME_MS = 800
-ENGINE_SKILL_LEVEL = None          # None = full strength; 0–20 if want weaker
+ENGINE_HASH_MB = 128
+DEFAULT_MOVETIME_MS = 300          # responsive but strong
+MAX_MOVETIME_MS = 2000
+ENGINE_SKILL_LEVEL = None          # None = full strength (~3000+)
 
 # ---------------------------------------------------------------------------
-# Board / Vision (Stage 1+)
+# Board
 # ---------------------------------------------------------------------------
 BOARD_SQUARES = 8
-# Minimal expected square size in pixels (used as hint for auto-detect)
-MIN_SQUARE_PX = 30
-MAX_SQUARE_PX = 200
+SQUARE_SIZE = 80                   # pixels per square in UI
 
 # ---------------------------------------------------------------------------
-# Overlay / Visualization (Stage 3)
+# Colors (CustomTkinter / Canvas)
 # ---------------------------------------------------------------------------
-ARROW_COLOR = (0, 180, 255)        # RGB — cyan-ish, used by overlay.py
-ARROW_ALPHA = 0.75                 # reserved (Tk transparency is limited)
-HIGHLIGHT_FROM_COLOR = (255, 200, 0)
-HIGHLIGHT_TO_COLOR = (0, 220, 120)
-OVERLAY_LINE_WIDTH = 5             # slightly thicker for visibility
-
-# ---------------------------------------------------------------------------
-# Modes
-# ---------------------------------------------------------------------------
-MODE_COACH = "coach"
-MODE_AUTO = "auto"
-
-# ---------------------------------------------------------------------------
-# Runtime
-# ---------------------------------------------------------------------------
-POLL_INTERVAL_MS = 400             # how often we re-scan the board in Coach mode
-AUTO_CLICK_DELAY_MS = 250          # delay before clicking in Auto mode
+LIGHT_SQUARE = "#F0D9B5"
+DARK_SQUARE = "#B58863"
+HIGHLIGHT_COLOR = "#AAD4FF"
+LAST_MOVE_COLOR = "#C6A664"
