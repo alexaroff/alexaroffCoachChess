@@ -8,34 +8,48 @@ Standalone desktop chess application (CustomTkinter).
 
 - Выбор цвета (белые / чёрные)
 - Выбор ориентации (я снизу / я сверху) — только до начала партии
-- Бот на полной силе Stockfish (~3000+ Elo)
-- Чистая архитектура без компьютерного зрения и захвата экрана
+- Бот на полной силе Stockfish (Master / Master+)
+- Тёмная тема, клик-клик, анимация хода бота
 
 ---
 
 ## Статус
 
-**27 июля 2026** — полный поворот проекта.
+**27 июля 2026** — MVP-структура и базовый код готовы.
 
-Старая концепция (оверлей поверх Duolingo Chess) заархивирована в ветке:
+Старая концепция (оверлей поверх Duolingo) заархивирована в:
 `archive/duolingo-overlay-2026-07`
 
-Причина: проблемы с качеством распознавания фигур на реальных скриншотах.
+---
+
+## Запуск
+
+```bash
+cd ~/alexaroffCoachChess
+git pull origin main
+source venv/bin/activate
+pip install -r requirements.txt
+# Stockfish: brew install stockfish
+python main.py
+```
 
 ---
 
-## Что будет дальше
+## Структура
 
-1. Очистка `main` от кода детекции экрана, TinyCNN, region selection, overlay.
-2. Новая структура под CustomTkinter.
-3. MVP: игра против сильного бота с выбором стороны и ориентации.
-
----
-
-## Архивная версия
-
-Полный код старого подхода сохранён здесь:  
-https://github.com/alexaroff/alexaroffCoachChess/tree/archive/duolingo-overlay-2026-07
+```
+main.py
+config.py
+engine_manager.py
+game/
+  player.py
+  game_controller.py
+ui/
+  setup_frame.py
+  game_frame.py
+  board_canvas.py
+templates/
+```
 
 ---
 
