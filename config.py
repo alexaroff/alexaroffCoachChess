@@ -33,24 +33,33 @@ _STOCKFISH_CANDIDATES = [
 STOCKFISH_PATH = next((p for p in _STOCKFISH_CANDIDATES if p and Path(p).exists()), "stockfish")
 
 # ---------------------------------------------------------------------------
-# Engine (full strength by default)
+# Engine
 # ---------------------------------------------------------------------------
 ENGINE_THREADS = 1
 ENGINE_HASH_MB = 128
-DEFAULT_MOVETIME_MS = 300          # responsive but strong
-MAX_MOVETIME_MS = 2000
-ENGINE_SKILL_LEVEL = None          # None = full strength (~3000+)
+
+# Master: fast but strong
+MASTER_MOVETIME_MS = 350
+# Master+: deeper search
+MASTER_PLUS_MOVETIME_MS = 1200
 
 # ---------------------------------------------------------------------------
 # Board
 # ---------------------------------------------------------------------------
 BOARD_SQUARES = 8
-SQUARE_SIZE = 80                   # pixels per square in UI
+SQUARE_SIZE = 72                   # pixels per square
 
 # ---------------------------------------------------------------------------
-# Colors (CustomTkinter / Canvas)
+# Colors (dark theme + modern board)
 # ---------------------------------------------------------------------------
-LIGHT_SQUARE = "#F0D9B5"
+LIGHT_SQUARE = "#E8D5B5"
 DARK_SQUARE = "#B58863"
-HIGHLIGHT_COLOR = "#AAD4FF"
-LAST_MOVE_COLOR = "#C6A664"
+HIGHLIGHT_FROM = "#7B9EFF"
+HIGHLIGHT_TO = "#5CDB95"
+LAST_MOVE = "#C6A664"
+SELECT_COLOR = "#F6F669"
+LEGAL_MOVE_DOT = "#4CAF50"
+
+# App background
+APP_BG = "#1A1A1A"
+FRAME_BG = "#242424"

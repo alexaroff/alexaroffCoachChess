@@ -1,7 +1,8 @@
 """
 alexaroffCoachChess — Stockfish engine manager.
 
-Now with automatic restart on crash.
+Thin wrapper around python-chess.engine.
+Full strength by default.
 """
 
 from __future__ import annotations
@@ -16,14 +17,21 @@ from config import (
     STOCKFISH_PATH,
     ENGINE_THREADS,
     ENGINE_HASH_MB,
-    DEFAULT_MOVETIME_MS,
-    ENGINE_SKILL_LEVEL,
+    MASTER_MOVETIME_MS,
 )
 
 log = logging.getLogger(__name__)
 
 
 class EngineManager:
+    """
+    Lifecycle:
+        eng = EngineManager()
+        eng.start()
+        move = eng.get_best_move(board, movetime_ms=...)
+        eng.stop()
+    """
+
     def __init__(self, path: Optional[str] = None):
         self.path = path or STOCKFISH_PATH
         self._engine: Optional[chess.engine.SimpleEngine] = None
@@ -44,14 +52,10 @@ class EngineManager:
                 "Install via `brew install stockfish` or set STOCKFISH_PATH."
             ) from e
 
-        options = {
+        self._engine.configure({
             "Threads": ENGINE_THREADS,
             "Hash": ENGINE_HASH_MB,
-        }
-        if ENGINE_SKILL_LEVEL is not None:
-            options["Skill Level"] = ENGINE_SKILL_LEVEL
-
-        self._engine.configure(options)
+        })
         log.info("Engine ready (Threads=%s, Hash=%s)", ENGINE_THREADS, ENGINE_HASH_MB)
 
     def stop(self) -> None:
@@ -63,55 +67,20 @@ class EngineManager:
             self._engine = None
             log.info("Engine stopped")
 
-    def _restart(self) -> None:
-        log.warning("Restarting Stockfish after crash...")
-        self.stop()
-        self.start()
-
     def get_best_move(
         self,
         board: chess.Board,
         movetime_ms: Optional[int] = None,
     ) -> Optional[chess.Move]:
         if self._engine is None:
-            self.start()
+            raise RuntimeError("Engine not started. Call start() first.")
 
         if board.is_game_over():
             return None
 
-        # Safety: never send a board that is missing a king.
-        # Weak type classification can turn a king into a pawn;
-        # Stockfish then rejects the position and we used to fail silently.
-        if board.king(chess.WHITE) is None or board.king(chess.BLACK) is None:
-            log.warning(
-                "Missing king(s) on board (white=%s, black=%s) — skipping engine call",
-                board.king(chess.WHITE) is not None,
-                board.king(chess.BLACK) is not None,
-            )
-            return None
-
-        if len(board.piece_map()) < 2:
-            log.warning("Board has too few pieces, skipping engine call")
-            return None
-
-        limit = chess.engine.Limit(time=(movetime_ms or DEFAULT_MOVETIME_MS) / 1000.0)
-
-        try:
-            result = self._engine.play(board, limit)
-            return result.move
-        except (chess.engine.EngineTerminatedError, chess.engine.EngineError) as e:
-            log.error("Engine error: %s — restarting", e)
-            try:
-                self._restart()
-                # One retry after restart
-                result = self._engine.play(board, limit)
-                return result.move
-            except Exception as e2:
-                log.error("Engine still broken after restart: %s", e2)
-                return None
-        except Exception as e:
-            log.error("Unexpected engine error: %s", e)
-            return None
+        limit = chess.engine.Limit(time=(movetime_ms or MASTER_MOVETIME_MS) / 1000.0)
+        result = self._engine.play(board, limit)
+        return result.move
 
     def analyse(
         self,
@@ -119,13 +88,9 @@ class EngineManager:
         movetime_ms: int = 100,
     ) -> chess.engine.InfoDict:
         if self._engine is None:
-            self.start()
+            raise RuntimeError("Engine not started")
         limit = chess.engine.Limit(time=movetime_ms / 1000.0)
-        try:
-            return self._engine.analyse(board, limit)
-        except Exception:
-            self._restart()
-            return self._engine.analyse(board, limit)
+        return self._engine.analyse(board, limit)
 
     def __enter__(self) -> "EngineManager":
         self.start()
