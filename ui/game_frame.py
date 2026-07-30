@@ -27,6 +27,7 @@ class GameFrame(ctk.CTkFrame):
         self.configure(fg_color="#1A1A1A")
 
         self._bot_thinking = False
+        self._bot_generation = 0  # increments on undo / new game start to ignore stale results
 
         self._build()
         self.board_canvas.redraw()
@@ -67,11 +68,20 @@ class GameFrame(ctk.CTkFrame):
         ctk.CTkButton(
             bottom,
             text="Сдаться",
-            width=120,
+            width=110,
             fg_color="#4B5563",
             hover_color="#374151",
             command=self._resign,
-        ).pack(side="left", padx=20)
+        ).pack(side="left", padx=(20, 8))
+
+        ctk.CTkButton(
+            bottom,
+            text="Отменить ход",
+            width=130,
+            fg_color="#4B5563",
+            hover_color="#374151",
+            command=self._undo,
+        ).pack(side="left", padx=8)
 
         ctk.CTkButton(
             bottom,
@@ -111,6 +121,8 @@ class GameFrame(ctk.CTkFrame):
         self.status_label.configure(text="Ход бота…")
         self.update_idletasks()
 
+        gen = self._bot_generation
+
         def worker() -> None:
             try:
                 move = self.controller.request_bot_move()
@@ -118,11 +130,16 @@ class GameFrame(ctk.CTkFrame):
                 self.after(0, lambda: self._on_bot_error(str(e)))
                 return
 
-            self.after(0, lambda: self._on_bot_move_ready(move))
+            self.after(0, lambda: self._on_bot_move_ready(move, gen))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_bot_move_ready(self, move: Optional[chess.Move]) -> None:
+    def _on_bot_move_ready(self, move: Optional[chess.Move], gen: int) -> None:
+        # Stale result after undo — ignore
+        if gen != self._bot_generation:
+            self._bot_thinking = False
+            return
+
         self._bot_thinking = False
 
         if move is None:
@@ -132,6 +149,8 @@ class GameFrame(ctk.CTkFrame):
             return
 
         def after_anim() -> None:
+            if gen != self._bot_generation:
+                return
             self.controller.confirm_bot_move(move)
             self.board_canvas.redraw()
             self.status_label.configure(text=self._status_text())
@@ -151,6 +170,18 @@ class GameFrame(ctk.CTkFrame):
         dialog.grab_set()
         ctk.CTkLabel(dialog, text=f"Stockfish:\n{msg}", text_color="#FF6B6B").pack(pady=30)
         ctk.CTkButton(dialog, text="OK", command=dialog.destroy).pack()
+
+    def _undo(self) -> None:
+        if self.board_canvas._animating:
+            return
+        if self.controller.is_game_over:
+            return
+        # Cancel any in-flight bot calculation
+        self._bot_generation += 1
+        self._bot_thinking = False
+        if self.controller.undo():
+            self.board_canvas.redraw()
+            self.status_label.configure(text=self._status_text())
 
     def _resign(self) -> None:
         if self._bot_thinking or self.board_canvas._animating:

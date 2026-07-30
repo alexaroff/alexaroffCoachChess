@@ -219,6 +219,28 @@ class GameController:
         if self.board.is_game_over() and self.on_game_over:
             self.on_game_over(self.result_text())
 
+    def undo(self) -> bool:
+        """
+        Take back the last full turn (human move + bot reply if present).
+        Leaves the board on human's turn (or start position).
+        Returns True if at least one move was undone.
+        """
+        if not self.board.move_stack:
+            return False
+
+        # Pop bot's reply if it's currently bot's turn / just after bot
+        while self.board.move_stack and not self.is_human_turn:
+            self.board.pop()
+
+        # Also pop the human's last move so they can try a different one
+        if self.board.move_stack:
+            self.board.pop()
+
+        self.last_move = self.board.move_stack[-1] if self.board.move_stack else None
+        self._selected_square = None
+        log.info("Undo → ply count now %s", len(self.board.move_stack))
+        return True
+
     def resign(self) -> None:
         """Human resigns."""
         if self.on_game_over:

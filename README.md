@@ -17,9 +17,10 @@ Standalone desktop chess application (CustomTkinter).
 
 ## Статус
 
-**30 июля 2026** — v0.5.0  
+**30 июля 2026** — v0.5.1  
 - Неблокирующий расчёт хода бота  
 - Реальная анимация перемещения фигуры  
+- Отмена последнего хода (takeback)  
 - Graceful обработка отсутствия Stockfish  
 - Старая концепция (оверлей Duolingo) полностью заброшена
 
@@ -30,10 +31,11 @@ Standalone desktop chess application (CustomTkinter).
 ```bash
 cd ~/alexaroffCoachChess
 git pull origin main
-source venv/bin/activate
+source venv/bin/activate          # обязательно
 pip install -r requirements.txt
 # Stockfish: brew install stockfish   (или apt install stockfish)
 python main.py
+# если python не находится — используй python3 main.py
 ```
 
 ---

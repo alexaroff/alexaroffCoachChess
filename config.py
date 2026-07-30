@@ -14,7 +14,7 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 APP_ID = "com.alexaroff.coachchess"
 
 # ---------------------------------------------------------------------------
