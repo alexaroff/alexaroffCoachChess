@@ -52,8 +52,10 @@ class GameController:
 
         self._selected_square: Optional[chess.Square] = None
         self.last_move: Optional[chess.Move] = None
-        self._pending_bot_move: Optional[chess.Move] = None
 
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
     @property
     def is_human_turn(self) -> bool:
         return self.board.turn == self.human_color and not self.board.is_game_over()
@@ -74,7 +76,11 @@ class GameController:
             return "Вы победили!"
         return "Вы проиграли"
 
+    # ------------------------------------------------------------------
+    # Orientation helpers
+    # ------------------------------------------------------------------
     def square_to_display(self, square: chess.Square) -> Tuple[int, int]:
+        """Return (row, col) for drawing. row 0 is top of the widget."""
         rank = chess.square_rank(square)
         file = chess.square_file(square)
         if self.human_at_bottom:
@@ -94,6 +100,7 @@ class GameController:
         return row, col
 
     def display_to_square(self, row: int, col: int) -> chess.Square:
+        """Inverse of square_to_display."""
         if self.human_at_bottom:
             if self.human_color == chess.WHITE:
                 rank = 7 - row
@@ -110,31 +117,46 @@ class GameController:
                 file = col
         return chess.square(file, rank)
 
+    # ------------------------------------------------------------------
+    # Move handling
+    # ------------------------------------------------------------------
     def select_square(self, square: chess.Square) -> bool:
+        """
+        Handle a click on a square.
+        Returns True if the board should be redrawn.
+        Does NOT trigger the bot — UI is responsible for that.
+        """
         if not self.is_human_turn:
             return False
 
         piece = self.board.piece_at(square)
 
+        # First click — select own piece
         if self._selected_square is None:
             if piece and piece.color == self.human_color:
                 self._selected_square = square
                 return True
             return False
 
+        # Second click
         from_sq = self._selected_square
         self._selected_square = None
 
+        # Clicked same square → deselect
         if square == from_sq:
             return True
 
+        # Clicked another own piece → reselect
         if piece and piece.color == self.human_color:
             self._selected_square = square
             return True
 
+        # Try to make a move
         move = chess.Move(from_sq, square)
 
-        if self.board.piece_at(from_sq) and self.board.piece_at(from_sq).piece_type == chess.PAWN:
+        # Handle promotion (always queen for simplicity in MVP)
+        piece_at_from = self.board.piece_at(from_sq)
+        if piece_at_from and piece_at_from.piece_type == chess.PAWN:
             if (self.human_color == chess.WHITE and chess.square_rank(square) == 7) or \
                (self.human_color == chess.BLACK and chess.square_rank(square) == 0):
                 move = chess.Move(from_sq, square, promotion=chess.QUEEN)
@@ -143,44 +165,52 @@ class GameController:
             self._make_move(move)
             return True
 
-        return True
+        return True  # deselect even on illegal
 
     def get_selected_square(self) -> Optional[chess.Square]:
         return self._selected_square
 
-    def get_legal_targets(self) -> list:
+    def get_legal_targets(self) -> list[chess.Square]:
         if self._selected_square is None:
             return []
         return [m.to_square for m in self.board.legal_moves if m.from_square == self._selected_square]
 
     def _make_move(self, move: chess.Move) -> None:
+        """Push human move. Does NOT request bot move — UI decides when to call request_bot_move."""
         self.board.push(move)
         self.last_move = move
-        log.info("Move: %s", move.uci())
+        self._selected_square = None
+        log.info("Human move: %s", move.uci())
 
-        if self.board.is_game_over():
-            if self.on_game_over:
-                self.on_game_over(self.result_text())
-            return
+        if self.board.is_game_over() and self.on_game_over:
+            self.on_game_over(self.result_text())
 
-        if not self.is_human_turn:
-            self._request_bot_move()
+    def request_bot_move(self) -> Optional[chess.Move]:
+        """
+        Compute bot's best move (blocking).
+        Call this from a background thread.
+        Returns the move or None if game over / no move.
+        """
+        if self.is_human_turn or self.is_game_over:
+            return None
 
-    def _request_bot_move(self) -> None:
         move = self.bot.get_move(self.board)
         if move is None:
-            return
+            return None
+
         if self.on_bot_move_start:
             self.on_bot_move_start(move)
-        self._pending_bot_move = move
 
-    def confirm_bot_move(self) -> None:
-        move = self._pending_bot_move
-        if move is None:
+        return move
+
+    def confirm_bot_move(self, move: chess.Move) -> None:
+        """Called by UI after animation finishes. Pushes the move to the board."""
+        if move not in self.board.legal_moves:
+            log.warning("Attempted to confirm illegal bot move: %s", move.uci())
             return
+
         self.board.push(move)
         self.last_move = move
-        self._pending_bot_move = None
         log.info("Bot move: %s", move.uci())
 
         if self.on_bot_move_end:
@@ -190,5 +220,6 @@ class GameController:
             self.on_game_over(self.result_text())
 
     def resign(self) -> None:
+        """Human resigns."""
         if self.on_game_over:
             self.on_game_over("Вы сдались")

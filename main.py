@@ -37,13 +37,51 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.engine = EngineManager()
-        self.engine.start()
-
         self.controller: GameController | None = None
         self.current_frame = None
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Try to start engine. If fails — show error and still open setup
+        # (user can install Stockfish and restart).
+        try:
+            self.engine.start()
+        except Exception as e:
+            log.error("Failed to start Stockfish: %s", e)
+            self.after(200, lambda: self._show_engine_error(str(e)))
+
         self._show_setup()
+
+    def _show_engine_error(self, msg: str) -> None:
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Stockfish не найден")
+        dialog.geometry("420x220")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#1A1A1A")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        ctk.CTkLabel(
+            dialog,
+            text="Stockfish не найден",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#FF6B6B",
+        ).pack(pady=(24, 8))
+
+        ctk.CTkLabel(
+            dialog,
+            text="Установи через:\n  brew install stockfish\nили укажи STOCKFISH_PATH.",
+            font=ctk.CTkFont(size=13),
+            text_color="#CCCCCC",
+            justify="left",
+        ).pack(pady=4)
+
+        ctk.CTkButton(
+            dialog,
+            text="Понятно",
+            width=120,
+            command=dialog.destroy,
+        ).pack(pady=20)
 
     def _clear(self) -> None:
         if self.current_frame is not None:
@@ -56,6 +94,10 @@ class App(ctk.CTk):
         self.current_frame.pack(fill="both", expand=True)
 
     def _start_game(self, human_color: chess.Color, human_at_bottom: bool, strength: str) -> None:
+        if not self.engine.is_running:
+            self._show_engine_error("Движок не запущен. Установи Stockfish и перезапусти приложение.")
+            return
+
         self._clear()
 
         self.controller = GameController(

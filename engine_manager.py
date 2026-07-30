@@ -49,8 +49,11 @@ class EngineManager:
         except FileNotFoundError as e:
             raise RuntimeError(
                 f"Stockfish binary not found at '{self.path}'. "
-                "Install via `brew install stockfish` or set STOCKFISH_PATH."
+                "Install via `brew install stockfish` (macOS) / `apt install stockfish` "
+                "or set STOCKFISH_PATH env var."
             ) from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to start Stockfish: {e}") from e
 
         self._engine.configure({
             "Threads": ENGINE_THREADS,
