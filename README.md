@@ -2,7 +2,7 @@
 
 Standalone desktop chess application (CustomTkinter).
 
-**Новая концепция (с 27 июля 2026)**
+**Концепция**
 
 Игра «Я против бота» с собственной доской.
 
@@ -10,15 +10,13 @@ Standalone desktop chess application (CustomTkinter).
 - Выбор ориентации (я снизу / я сверху) — только до начала партии
 - Бот на полной силе Stockfish (Master / Master+)
 - Тёмная тема, клик-клик, анимация хода бота
+- Современные классические 2D-фигуры (Staunton-стиль)
 
 ---
 
 ## Статус
 
-**27 июля 2026** — MVP-структура и базовый код готовы.
-
-Старая концепция (оверлей поверх Duolingo) заархивирована в:
-`archive/duolingo-overlay-2026-07`
+**30 июля 2026** — MVP работает. Фигуры обновлены. Старая концепция (оверлей поверх Duolingo) полностью заброшена.
 
 ---
 
@@ -29,7 +27,7 @@ cd ~/alexaroffCoachChess
 git pull origin main
 source venv/bin/activate
 pip install -r requirements.txt
-# Stockfish: brew install stockfish
+# Stockfish: brew install stockfish   (или apt/yum)
 python main.py
 ```
 
@@ -48,9 +46,9 @@ ui/
   setup_frame.py
   game_frame.py
   board_canvas.py
-templates/
+templates/          # современные фигуры
 ```
 
 ---
 
-**Последнее обновление:** 27 июля 2026
+**Последнее обновление:** 30 июля 2026
