@@ -14,7 +14,7 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
 APP_ID = "com.alexaroff.coachchess"
 
 # ---------------------------------------------------------------------------
@@ -38,16 +38,28 @@ STOCKFISH_PATH = next((p for p in _STOCKFISH_CANDIDATES if p and Path(p).exists(
 ENGINE_THREADS = 1
 ENGINE_HASH_MB = 128
 
-# Master: fast but strong
-MASTER_MOVETIME_MS = 350
-# Master+: deeper search
-MASTER_PLUS_MOVETIME_MS = 1200
+# Elo → Stockfish settings
+# skill: 0–20, movetime_ms: thinking time
+# limit_strength + elo used when supported (Stockfish 11+)
+ELO_LEVELS: dict[int, dict] = {
+    400:  {"skill": 0,  "movetime_ms": 50,   "limit_strength": True,  "elo": 800},
+    600:  {"skill": 1,  "movetime_ms": 80,   "limit_strength": True,  "elo": 1000},
+    800:  {"skill": 3,  "movetime_ms": 120,  "limit_strength": True,  "elo": 1200},
+    1200: {"skill": 6,  "movetime_ms": 200,  "limit_strength": True,  "elo": 1400},
+    1600: {"skill": 10, "movetime_ms": 350,  "limit_strength": True,  "elo": 1600},
+    2000: {"skill": 14, "movetime_ms": 500,  "limit_strength": True,  "elo": 2000},
+    2400: {"skill": 17, "movetime_ms": 800,  "limit_strength": True,  "elo": 2400},
+    2600: {"skill": 20, "movetime_ms": 1200, "limit_strength": False, "elo": 2800},
+}
+
+ELO_CHOICES = list(ELO_LEVELS.keys())  # [400, 600, ...]
 
 # ---------------------------------------------------------------------------
 # Board
 # ---------------------------------------------------------------------------
 BOARD_SQUARES = 8
-SQUARE_SIZE = 72                   # pixels per square
+SQUARE_SIZE = 72
+COORD_MARGIN = 20          # space for a–h / 1–8 labels
 
 # ---------------------------------------------------------------------------
 # Colors (dark theme + modern board)
@@ -59,7 +71,8 @@ HIGHLIGHT_TO = "#5CDB95"
 LAST_MOVE = "#C6A664"
 SELECT_COLOR = "#F6F669"
 LEGAL_MOVE_DOT = "#4CAF50"
-CHECK_COLOR = "#E74C3C"          # king in check
+CHECK_COLOR = "#E74C3C"
+COORD_COLOR = "#888888"
 
 # App background
 APP_BG = "#1A1A1A"
