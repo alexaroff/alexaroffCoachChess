@@ -2,7 +2,7 @@
 alexaroffCoachChess — Stockfish engine manager.
 
 Thin wrapper around python-chess.engine.
-Full strength by default.
+Supports Elo-based strength via Skill Level + UCI_LimitStrength.
 """
 
 from __future__ import annotations
@@ -17,24 +17,18 @@ from config import (
     STOCKFISH_PATH,
     ENGINE_THREADS,
     ENGINE_HASH_MB,
-    MASTER_MOVETIME_MS,
+    ELO_LEVELS,
 )
 
 log = logging.getLogger(__name__)
 
 
 class EngineManager:
-    """
-    Lifecycle:
-        eng = EngineManager()
-        eng.start()
-        move = eng.get_best_move(board, movetime_ms=...)
-        eng.stop()
-    """
-
     def __init__(self, path: Optional[str] = None):
         self.path = path or STOCKFISH_PATH
         self._engine: Optional[chess.engine.SimpleEngine] = None
+        self._current_elo: Optional[int] = None
+        self._movetime_ms: int = 350
 
     @property
     def is_running(self) -> bool:
@@ -70,6 +64,36 @@ class EngineManager:
             self._engine = None
             log.info("Engine stopped")
 
+    def set_strength(self, elo: int) -> None:
+        """Configure engine for target Elo. Call once per game."""
+        if self._engine is None:
+            raise RuntimeError("Engine not started")
+
+        cfg = ELO_LEVELS.get(elo, ELO_LEVELS[1600])
+        self._movetime_ms = cfg["movetime_ms"]
+        self._current_elo = elo
+
+        options: dict = {"Skill Level": cfg["skill"]}
+
+        if cfg.get("limit_strength"):
+            options["UCI_LimitStrength"] = True
+            options["UCI_Elo"] = cfg.get("elo", elo)
+        else:
+            options["UCI_LimitStrength"] = False
+
+        try:
+            self._engine.configure(options)
+            log.info(
+                "Strength set: Elo~%s skill=%s movetime=%sms limit=%s",
+                elo, cfg["skill"], self._movetime_ms, cfg.get("limit_strength"),
+            )
+        except Exception as e:
+            log.warning("Could not set full strength options (%s), using Skill Level only", e)
+            try:
+                self._engine.configure({"Skill Level": cfg["skill"]})
+            except Exception:
+                pass
+
     def get_best_move(
         self,
         board: chess.Board,
@@ -81,7 +105,8 @@ class EngineManager:
         if board.is_game_over():
             return None
 
-        limit = chess.engine.Limit(time=(movetime_ms or MASTER_MOVETIME_MS) / 1000.0)
+        mt = movetime_ms if movetime_ms is not None else self._movetime_ms
+        limit = chess.engine.Limit(time=mt / 1000.0)
         result = self._engine.play(board, limit)
         return result.move
 

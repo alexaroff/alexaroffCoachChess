@@ -27,14 +27,12 @@ class BotPlayer:
         self,
         color: chess.Color,
         engine: EngineManager,
-        movetime_ms: int,
     ):
         self.color = color
         self.engine = engine
-        self.movetime_ms = movetime_ms
 
     def get_move(self, board: chess.Board) -> Optional[chess.Move]:
-        return self.engine.get_best_move(board, movetime_ms=self.movetime_ms)
+        return self.engine.get_best_move(board)
 
     def __repr__(self) -> str:
-        return f"BotPlayer({'White' if self.color else 'Black'}, {self.movetime_ms}ms)"
+        return f"BotPlayer({'White' if self.color else 'Black'})"
