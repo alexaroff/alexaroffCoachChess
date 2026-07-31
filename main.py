@@ -42,6 +42,8 @@ class App(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # Try to start engine. If fails — show error and still open setup
+        # (user can install Stockfish and restart).
         try:
             self.engine.start()
         except Exception as e:
@@ -96,7 +98,13 @@ class App(ctk.CTk):
         self.current_frame = SetupFrame(self, on_start=self._start_game)
         self.current_frame.pack(fill="both", expand=True)
 
-    def _start_game(self, human_color: chess.Color, human_at_bottom: bool, elo: int) -> None:
+    def _start_game(
+        self,
+        human_color: chess.Color,
+        human_at_bottom: bool,
+        elo: int,
+        mode: str,
+    ) -> None:
         if not self.engine.is_running:
             self._show_engine_error("Движок не запущен. Установи Stockfish и перезапусти приложение.")
             return
@@ -107,8 +115,9 @@ class App(ctk.CTk):
             human_color=human_color,
             human_at_bottom=human_at_bottom,
             elo=elo,
+            mode=mode,
             engine=self.engine,
-            on_game_over=lambda text: None,
+            on_game_over=lambda text: None,  # handled inside GameFrame
         )
 
         self.current_frame = GameFrame(
