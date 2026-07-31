@@ -53,6 +53,7 @@ class GameController:
         self._selected_square: Optional[chess.Square] = None
         self.last_move: Optional[chess.Move] = None
         self.last_san: Optional[str] = None
+        self.move_sans: list[str] = []          # full history of SANs in order
         self._pending_promotion: Optional[tuple[chess.Square, chess.Square]] = None
 
     # ------------------------------------------------------------------
@@ -164,14 +165,13 @@ class GameController:
                 needs_promo = True
 
         if needs_promo:
-            # Check that at least one promotion is legal
             promo_moves = [
                 chess.Move(from_sq, square, promotion=p)
                 for p in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT)
             ]
             if any(m in self.board.legal_moves for m in promo_moves):
                 self._pending_promotion = (from_sq, square)
-                return "promotion"  # special signal for UI
+                return "promotion"
             return True
 
         move = chess.Move(from_sq, square)
@@ -195,6 +195,7 @@ class GameController:
         self.board.push(move)
         self.last_move = move
         self.last_san = san
+        self.move_sans.append(san)
         self._selected_square = None
         self._pending_promotion = None
         log.info("Human move: %s (%s)", move.uci(), san)
@@ -230,6 +231,7 @@ class GameController:
         self.board.push(move)
         self.last_move = move
         self.last_san = san
+        self.move_sans.append(san)
         log.info("Bot move: %s (%s)", move.uci(), san)
 
         if self.on_bot_move_end:
@@ -256,28 +258,47 @@ class GameController:
 
     def undo(self) -> bool:
         """
-        Take back the last full turn (human move + bot reply if present).
-        Leaves the board on human's turn (or start position).
-        Returns True if at least one move was undone.
+        Take back the last full turn so human can move again from that position.
+        - If it's human's turn (bot already replied) → pop bot + human.
+        - If it's bot's turn (human just moved) → pop only human.
+        Always leaves human to move (or empty board).
         """
         if not self.board.move_stack:
             return False
 
-        # Pop bot's reply if it's currently bot's turn / just after bot
-        while self.board.move_stack and not self.is_human_turn:
+        if self.board.turn == self.human_color:
+            # Human to move → last move was by bot → undo bot, then human
             self.board.pop()
-
-        # Also pop the human's last move so they can try a different one
-        if self.board.move_stack:
+            if self.move_sans:
+                self.move_sans.pop()
+            if self.board.move_stack:
+                self.board.pop()
+                if self.move_sans:
+                    self.move_sans.pop()
+        else:
+            # Bot to move → last move was by human → undo only human
             self.board.pop()
+            if self.move_sans:
+                self.move_sans.pop()
 
         self.last_move = self.board.move_stack[-1] if self.board.move_stack else None
-        # Rebuild last_san is hard without history; clear for simplicity
-        self.last_san = None
+        self.last_san = self.move_sans[-1] if self.move_sans else None
         self._selected_square = None
         self._pending_promotion = None
-        log.info("Undo → ply count now %s", len(self.board.move_stack))
+        log.info("Undo → %s plies left, human_to_move=%s", len(self.board.move_stack), self.is_human_turn)
         return True
+
+    def history_text(self) -> str:
+        """Format move list as '1. e4 e5  2. Nf3 Nc6 ...'"""
+        if not self.move_sans:
+            return ""
+        parts: list[str] = []
+        for i, san in enumerate(self.move_sans):
+            if i % 2 == 0:
+                parts.append(f"{i // 2 + 1}. {san}")
+            else:
+                parts.append(san)
+        return "  ".join(parts)
 
     def resign(self) -> None:
         """Human resigns."""
