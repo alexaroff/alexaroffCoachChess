@@ -39,7 +39,7 @@ CustomTkinter + python-chess + Stockfish.
 
 ## Требования
 
-- Python 3.10+
+- Python 3.10+ (**на macOS — 3.12 из Homebrew**, системный 3.9 даёт пустое окно)
 - [Stockfish](https://stockfishchess.org/)
 - Пакеты из `requirements.txt`
 
@@ -53,35 +53,127 @@ Pillow>=10.0
 
 ## Установка и запуск
 
-### Быстрый запуск (рекомендуется)
+### macOS с нуля (рекомендуется)
+
+Один блок в Terminal. Каждый этап проверяется: ошибка → стоп, успех → дальше.  
+Ставит Homebrew (если нет), Python **3.12**, Stockfish, клонирует репо, venv, зависимости и запускает игру.
+
+```bash
+bash << 'EOF'
+set -euo pipefail
+
+ok()   { echo "  OK: $1"; }
+fail() { echo "  FAIL: $1"; exit 1; }
+step() { echo; echo "=== $1 ==="; }
+
+# --- 1. Homebrew ---
+step "1/6 Homebrew"
+if ! command -v brew >/dev/null 2>&1; then
+  echo "Ставлю Homebrew (может запросить пароль)..."
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || fail "установка Homebrew"
+fi
+
+if [ -x /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+  grep -qs 'homebrew/bin/brew shellenv' ~/.zprofile 2>/dev/null || echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+elif [ -x /usr/local/bin/brew ]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+  grep -qs 'usr/local/bin/brew shellenv' ~/.zprofile 2>/dev/null || echo 'eval "$(/usr/local/bin/brew shellenv)"' >> ~/.zprofile
+else
+  fail "brew не найден после установки"
+fi
+brew --version >/dev/null || fail "brew не работает"
+ok "brew $(brew --version | head -1)"
+
+# --- 2. Python 3.12 + Stockfish ---
+step "2/6 Python 3.12 + Stockfish"
+brew list python@3.12 >/dev/null 2>&1 || brew install python@3.12 || fail "python@3.12"
+brew list stockfish   >/dev/null 2>&1 || brew install stockfish   || fail "stockfish"
+
+if [ -x /opt/homebrew/bin/python3.12 ]; then
+  PYTHON=/opt/homebrew/bin/python3.12
+elif [ -x /usr/local/bin/python3.12 ]; then
+  PYTHON=/usr/local/bin/python3.12
+else
+  PYTHON="$(command -v python3.12 || true)"
+fi
+[ -n "${PYTHON}" ] && [ -x "$PYTHON" ] || fail "python3.12 не найден"
+"$PYTHON" --version | grep -q '3\.12' || fail "нужен Python 3.12, сейчас: $($PYTHON --version)"
+command -v stockfish >/dev/null || fail "stockfish не в PATH"
+ok "$($PYTHON --version)"
+ok "stockfish → $(command -v stockfish)"
+
+# --- 3. Клон ---
+step "3/6 Клон репозитория"
+PROJECT="$HOME/alexaroffCoachChess"
+rm -rf "$PROJECT"
+git clone https://github.com/alexaroff/alexaroffCoachChess.git "$PROJECT" || fail "git clone"
+[ -f "$PROJECT/requirements.txt" ] || fail "нет requirements.txt"
+[ -f "$PROJECT/main.py" ] || fail "нет main.py"
+ok "клон в $PROJECT"
+
+# --- 4. venv ---
+step "4/6 Виртуальное окружение"
+cd "$PROJECT"
+rm -rf venv
+"$PYTHON" -m venv venv || fail "создание venv"
+# shellcheck disable=SC1091
+source "$PROJECT/venv/bin/activate"
+ok "venv активирован ($(python --version))"
+
+# --- 5. Зависимости ---
+step "5/6 pip install"
+python -m pip install --upgrade pip || fail "upgrade pip"
+pip install -r "$PROJECT/requirements.txt" || fail "pip install -r requirements.txt"
+python -c "import chess, customtkinter, PIL" || fail "импорт chess/customtkinter/PIL"
+ok "зависимости установлены"
+
+# --- 6. Запуск ---
+step "6/6 Запуск"
+export TK_SILENCE_DEPRECATION=1
+echo "Запускаю main.py — должно открыться окно настройки партии."
+python "$PROJECT/main.py" || fail "запуск main.py"
+
+echo
+echo "=============================================="
+echo "  Готово"
+echo "=============================================="
+echo "Папка:  $PROJECT"
+echo "Снова:  cd ~/alexaroffCoachChess && source venv/bin/activate && python main.py"
+echo
+EOF
+```
+
+**Важно:** на macOS нужен **Python 3.12 из Homebrew**, не системный 3.9 — иначе CustomTkinter часто открывает пустое серое окно.
+
+### Повторный запуск (уже установлено)
+
+```bash
+cd ~/alexaroffCoachChess
+source venv/bin/activate
+export TK_SILENCE_DEPRECATION=1
+python main.py
+```
+
+Или:
 
 ```bash
 cd ~/alexaroffCoachChess
 ./run.sh
 ```
 
-Скрипт сам делает `git pull`, поднимает venv (создаёт при первом запуске) и стартует игру.  
-Можно повесить на рабочий стол / в Dock / создать ярлык.
-
-### Ручная установка (один раз)
+### Linux (кратко)
 
 ```bash
-cd ~/alexaroffCoachChess
-git pull origin main
-
-python3 -m venv venv
-source venv/bin/activate          # Windows: venv\\Scripts\\activate
+sudo apt install stockfish python3-venv python3-tk   # или аналог
+git clone https://github.com/alexaroff/alexaroffCoachChess.git
+cd alexaroffCoachChess
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Stockfish
-#   macOS:  brew install stockfish
-#   Linux:  sudo apt install stockfish
-#   или:    export STOCKFISH_PATH=/path/to/stockfish
-
 python main.py
 ```
 
-Если Stockfish не установлен — приложение покажет диалог с инструкцией, без traceback.
+Если Stockfish не найден — приложение покажет диалог с инструкцией, без traceback.
 
 ---
 
