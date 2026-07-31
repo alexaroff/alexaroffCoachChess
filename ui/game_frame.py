@@ -61,6 +61,29 @@ class GameFrame(ctk.CTkFrame):
         )
         self.board_canvas.pack()
 
+        # Move history
+        hist_frame = ctk.CTkFrame(self, fg_color="#242424", corner_radius=8)
+        hist_frame.pack(fill="x", padx=20, pady=(4, 0))
+
+        ctk.CTkLabel(
+            hist_frame,
+            text="Ходы",
+            font=ctk.CTkFont(size=12),
+            text_color="#888888",
+        ).pack(anchor="w", padx=10, pady=(6, 0))
+
+        self.history_box = ctk.CTkTextbox(
+            hist_frame,
+            height=72,
+            font=ctk.CTkFont(size=13),
+            fg_color="#1E1E1E",
+            text_color="#DDDDDD",
+            activate_scrollbars=True,
+            wrap="word",
+        )
+        self.history_box.pack(fill="x", padx=8, pady=(2, 8))
+        self.history_box.configure(state="disabled")
+
         # Bottom buttons
         bottom = ctk.CTkFrame(self, fg_color="#1A1A1A")
         bottom.pack(fill="x", pady=12)
@@ -103,6 +126,15 @@ class GameFrame(ctk.CTkFrame):
             return "Ваш ход" + suffix
         return "Ход бота…" + suffix
 
+    def _refresh_history(self) -> None:
+        self.history_box.configure(state="normal")
+        self.history_box.delete("1.0", "end")
+        txt = self.controller.history_text()
+        if txt:
+            self.history_box.insert("1.0", txt)
+        self.history_box.configure(state="disabled")
+        self.history_box.see("end")
+
     def _on_square_clicked(self, square: chess.Square) -> None:
         if self._bot_thinking or self.board_canvas._animating:
             return
@@ -117,6 +149,7 @@ class GameFrame(ctk.CTkFrame):
         if result:
             self.board_canvas.redraw()
             self.status_label.configure(text=self._status_text())
+            self._refresh_history()
 
             if not self.controller.is_human_turn and not self.controller.is_game_over:
                 self.after(60, self._trigger_bot)
@@ -162,6 +195,7 @@ class GameFrame(ctk.CTkFrame):
             self.controller.confirm_bot_move(move)
             self.board_canvas.redraw()
             self.status_label.configure(text=self._status_text())
+            self._refresh_history()
             if self.controller.is_game_over:
                 self._show_result()
 
@@ -211,6 +245,7 @@ class GameFrame(ctk.CTkFrame):
             if self.controller.confirm_promotion(piece_type):
                 self.board_canvas.redraw()
                 self.status_label.configure(text=self._status_text())
+                self._refresh_history()
                 if not self.controller.is_human_turn and not self.controller.is_game_over:
                     self.after(60, self._trigger_bot)
                 elif self.controller.is_game_over:
@@ -248,6 +283,7 @@ class GameFrame(ctk.CTkFrame):
         if self.controller.undo():
             self.board_canvas.redraw()
             self.status_label.configure(text=self._status_text())
+            self._refresh_history()
 
     def _resign(self) -> None:
         if self._bot_thinking or self.board_canvas._animating:
