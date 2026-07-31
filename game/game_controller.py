@@ -13,6 +13,7 @@ from game.player import HumanPlayer, BotPlayer
 
 log = logging.getLogger(__name__)
 
+# Unicode symbols for captured pieces display
 _UNICODE = {
     (chess.WHITE, chess.PAWN):   "♙",
     (chess.WHITE, chess.KNIGHT): "♘",
@@ -28,12 +29,22 @@ _UNICODE = {
 
 
 class GameController:
+    """
+    Manages one game:
+    - board state
+    - whose turn
+    - human / bot players
+    - game over detection
+    - move history + captured pieces
+    """
+
     def __init__(
         self,
         human_color: chess.Color,
         human_at_bottom: bool,
         elo: int,
         engine: EngineManager,
+        mode: str = "play",
         on_bot_move_start: Optional[Callable[[chess.Move], None]] = None,
         on_bot_move_end: Optional[Callable[[chess.Move], None]] = None,
         on_game_over: Optional[Callable[[str], None]] = None,
@@ -42,6 +53,7 @@ class GameController:
         self.human_color = human_color
         self.human_at_bottom = human_at_bottom
         self.elo = elo
+        self.mode = mode  # "play" | "train" — Stage 0 flag
         self.engine = engine
 
         engine.set_strength(elo)
@@ -58,13 +70,28 @@ class GameController:
         self.last_move: Optional[chess.Move] = None
         self.last_san: Optional[str] = None
         self.move_sans: list[str] = []
+        self.move_list: list[chess.Move] = []  # parallel to move_sans, for analysis
         self._pending_promotion: Optional[tuple[chess.Square, chess.Square]] = None
 
+        # Captured pieces: list of (color_of_piece, piece_type)
+        # white_captured = pieces white took (black pieces)
         self.white_captured: List[tuple[bool, chess.PieceType]] = []
         self.black_captured: List[tuple[bool, chess.PieceType]] = []
         self._draw_agreed = False
         self._resigned = False
 
+        # Stage 1 — analysis / review
+        self.analysis: list = []          # List[MoveReview]
+        self.review_ply: Optional[int] = None  # currently reviewed half-move index
+        self._review_best: Optional[chess.Move] = None
+        self._saved_stack: Optional[list] = None  # for restoring after review
+        self._saved_sans: Optional[list] = None
+        self._saved_last: Optional[chess.Move] = None
+        self._saved_last_san: Optional[str] = None
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
     @property
     def is_human_turn(self) -> bool:
         return self.board.turn == self.human_color and not self.is_game_over
@@ -89,7 +116,11 @@ class GameController:
             return "Вы победили!"
         return "Вы проиграли"
 
+    # ------------------------------------------------------------------
+    # Orientation helpers
+    # ------------------------------------------------------------------
     def square_to_display(self, square: chess.Square) -> Tuple[int, int]:
+        """Return (row, col) for drawing. row 0 is top of the widget."""
         rank = chess.square_rank(square)
         file = chess.square_file(square)
         if self.human_at_bottom:
@@ -109,6 +140,7 @@ class GameController:
         return row, col
 
     def display_to_square(self, row: int, col: int) -> chess.Square:
+        """Inverse of square_to_display."""
         if self.human_at_bottom:
             if self.human_color == chess.WHITE:
                 rank = 7 - row
@@ -126,56 +158,78 @@ class GameController:
         return chess.square(file, rank)
 
     def file_label(self, col: int) -> str:
+        """Letter a–h for a display column."""
         sq = self.display_to_square(7, col)
         return chess.FILE_NAMES[chess.square_file(sq)]
 
     def rank_label(self, row: int) -> str:
+        """Digit 1–8 for a display row."""
         sq = self.display_to_square(row, 0)
         return chess.RANK_NAMES[chess.square_rank(sq)]
 
+    # ------------------------------------------------------------------
+    # Captured pieces helpers
+    # ------------------------------------------------------------------
     def _record_capture(self, move: chess.Move) -> None:
+        """Call BEFORE board.push."""
         captured = None
         if self.board.is_en_passant(move):
             cap_sq = move.to_square + (-8 if self.board.turn == chess.WHITE else 8)
             captured = self.board.piece_at(cap_sq)
         elif self.board.is_capture(move):
             captured = self.board.piece_at(move.to_square)
+
         if captured is None:
             return
+
         entry = (captured.color, captured.piece_type)
         if self.board.turn == chess.WHITE:
             self.white_captured.append(entry)
         else:
             self.black_captured.append(entry)
 
+    def _unrecord_last_capture(self, was_white_move: bool) -> None:
+        pass
+
     def captured_text(self, for_white: bool) -> str:
+        """Unicode string of pieces captured by white (or by black)."""
         lst = self.white_captured if for_white else self.black_captured
         order = {chess.QUEEN: 0, chess.ROOK: 1, chess.BISHOP: 2, chess.KNIGHT: 3, chess.PAWN: 4}
         sorted_lst = sorted(lst, key=lambda x: order.get(x[1], 9))
         return "".join(_UNICODE.get(item, "?") for item in sorted_lst)
 
+    # ------------------------------------------------------------------
+    # Move handling
+    # ------------------------------------------------------------------
     def select_square(self, square: chess.Square):
         if not self.is_human_turn:
             return False
+
         piece = self.board.piece_at(square)
+
         if self._selected_square is None:
             if piece and piece.color == self.human_color:
                 self._selected_square = square
                 return True
             return False
+
         from_sq = self._selected_square
         self._selected_square = None
+
         if square == from_sq:
             return True
+
         if piece and piece.color == self.human_color:
             self._selected_square = square
             return True
+
         piece_at_from = self.board.piece_at(from_sq)
         needs_promo = False
         if piece_at_from and piece_at_from.piece_type == chess.PAWN:
             if (self.human_color == chess.WHITE and chess.square_rank(square) == 7) or \
                (self.human_color == chess.BLACK and chess.square_rank(square) == 0):
                 needs_promo = True
+
         if needs_promo:
             promo_moves = [
                 chess.Move(from_sq, square, promotion=p)
@@ -185,10 +239,12 @@ class GameController:
                 self._pending_promotion = (from_sq, square)
                 return "promotion"
             return True
+
         move = chess.Move(from_sq, square)
         if move in self.board.legal_moves:
             self._make_move(move)
             return True
+
         return True
 
     def get_selected_square(self) -> Optional[chess.Square]:
@@ -206,9 +262,11 @@ class GameController:
         self.last_move = move
         self.last_san = san
         self.move_sans.append(san)
+        self.move_list.append(move)
         self._selected_square = None
         self._pending_promotion = None
         log.info("Human move: %s (%s)", move.uci(), san)
+
         if self.board.is_game_over() and self.on_game_over:
             self.on_game_over(self.result_text())
 
@@ -226,15 +284,19 @@ class GameController:
         if move not in self.board.legal_moves:
             log.warning("Attempted to confirm illegal bot move: %s", move.uci())
             return
+
         san = self.board.san(move)
         self._record_capture(move)
         self.board.push(move)
         self.last_move = move
         self.last_san = san
         self.move_sans.append(san)
+        self.move_list.append(move)
         log.info("Bot move: %s (%s)", move.uci(), san)
+
         if self.on_bot_move_end:
             self.on_bot_move_end(move)
+
         if self.board.is_game_over() and self.on_game_over:
             self.on_game_over(self.result_text())
 
@@ -254,21 +316,45 @@ class GameController:
         self._selected_square = None
 
     def undo(self) -> bool:
+        """
+        Undo last full turn, leave human to move.
+        Also rebuilds captured lists from remaining moves.
+        Works even after game over (mate / resign / draw) so user can explore
+        "what if I played differently".
+        """
         if not self.board.move_stack:
             return False
+
         if self.board.turn == self.human_color:
             self.board.pop()
             if self.move_sans:
                 self.move_sans.pop()
+            if self.move_list:
+                self.move_list.pop()
             if self.board.move_stack:
                 self.board.pop()
                 if self.move_sans:
                     self.move_sans.pop()
+                if self.move_list:
+                    self.move_list.pop()
         else:
             self.board.pop()
             if self.move_sans:
                 self.move_sans.pop()
+            if self.move_list:
+                self.move_list.pop()
+
+        # Clear end-of-game flags — after undo the position is playable again
+        self._draw_agreed = False
+        self._resigned = False
+
+        # Exit review if active; analysis becomes stale after structural undo
+        self.exit_review()
+        self.analysis = []
+
+        # Rebuild captured pieces from scratch (simple & correct)
         self._rebuild_captured()
+
         self.last_move = self.board.move_stack[-1] if self.board.move_stack else None
         self.last_san = self.move_sans[-1] if self.move_sans else None
         self._selected_square = None
@@ -277,6 +363,7 @@ class GameController:
         return True
 
     def _rebuild_captured(self) -> None:
+        """Replay moves to rebuild capture lists (cheap for normal game length)."""
         self.white_captured.clear()
         self.black_captured.clear()
         tmp = chess.Board()
@@ -320,3 +407,68 @@ class GameController:
         self._draw_agreed = True
         if self.on_game_over:
             self.on_game_over(self.result_text())
+
+    # ------------------------------------------------------------------
+    # Stage 1 — Review / Analysis helpers
+    # ------------------------------------------------------------------
+    def set_analysis(self, reviews: list) -> None:
+        self.analysis = reviews
+        self.exit_review()
+
+    def enter_review(self, ply: int) -> bool:
+        """
+        Show the board position after the given half-move and highlight
+        the played move + best alternative (if any).
+        """
+        if not self.analysis or ply < 0 or ply >= len(self.move_list):
+            return False
+
+        # Save current full state once
+        if self._saved_stack is None:
+            self._saved_stack = list(self.board.move_stack)
+            self._saved_sans = list(self.move_sans)
+            self._saved_last = self.last_move
+            self._saved_last_san = self.last_san
+
+        # Rebuild board up to ply (inclusive)
+        self.board.reset()
+        for m in self.move_list[: ply + 1]:
+            self.board.push(m)
+
+        self.review_ply = ply
+        self.last_move = self.move_list[ply]
+        self.last_san = self.move_sans[ply] if ply < len(self.move_sans) else None
+
+        review = None
+        for r in self.analysis:
+            if r.ply == ply:
+                review = r
+                break
+        self._review_best = review.best_move if review and review.is_human else None
+        return True
+
+    def exit_review(self) -> None:
+        """Restore the full game board after reviewing a move."""
+        if self._saved_stack is None:
+            self.review_ply = None
+            self._review_best = None
+            return
+
+        self.board.reset()
+        for m in self._saved_stack:
+            self.board.push(m)
+        self.move_sans = list(self._saved_sans or [])
+        self.last_move = self._saved_last
+        self.last_san = self._saved_last_san
+        self._saved_stack = None
+        self._saved_sans = None
+        self._saved_last = None
+        self._saved_last_san = None
+        self.review_ply = None
+        self._review_best = None
+
+    def get_review_best(self) -> Optional[chess.Move]:
+        return self._review_best
+
+    def is_reviewing(self) -> bool:
+        return self.review_ply is not None
