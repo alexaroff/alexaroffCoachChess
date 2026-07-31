@@ -62,16 +62,22 @@ class GameController:
 
         self.white_captured: List[tuple[bool, chess.PieceType]] = []
         self.black_captured: List[tuple[bool, chess.PieceType]] = []
+        self._draw_agreed = False
+        self._resigned = False
 
     @property
     def is_human_turn(self) -> bool:
-        return self.board.turn == self.human_color and not self.board.is_game_over()
+        return self.board.turn == self.human_color and not self.is_game_over
 
     @property
     def is_game_over(self) -> bool:
-        return self.board.is_game_over()
+        return self.board.is_game_over() or self._draw_agreed or self._resigned
 
     def result_text(self) -> str:
+        if self._draw_agreed:
+            return "Ничья (по соглашению)"
+        if self._resigned:
+            return "Вы сдались"
         if not self.board.is_game_over():
             return ""
         outcome = self.board.outcome()
@@ -301,5 +307,16 @@ class GameController:
         return "  ".join(parts)
 
     def resign(self) -> None:
+        if self.is_game_over:
+            return
+        self._resigned = True
         if self.on_game_over:
-            self.on_game_over("Вы сдались")
+            self.on_game_over(self.result_text())
+
+    def offer_draw(self) -> None:
+        """Human offers draw — bot always accepts."""
+        if self.is_game_over:
+            return
+        self._draw_agreed = True
+        if self.on_game_over:
+            self.on_game_over(self.result_text())
