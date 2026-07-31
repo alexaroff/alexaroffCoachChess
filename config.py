@@ -14,7 +14,7 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.6.0"
 APP_ID = "com.alexaroff.coachchess"
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,7 @@ HIGHLIGHT_TO = "#5CDB95"
 LAST_MOVE = "#C6A664"
 SELECT_COLOR = "#F6F669"
 LEGAL_MOVE_DOT = "#4CAF50"
+CHECK_COLOR = "#E74C3C"          # king in check
 
 # App background
 APP_BG = "#1A1A1A"
