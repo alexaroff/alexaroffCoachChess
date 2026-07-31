@@ -246,6 +246,15 @@ class BoardCanvas(tk.Canvas):
 
         self._animate_step()
 
+    def animate_move(
+        self,
+        move: chess.Move,
+        piece_key: str = "",
+        callback=None,
+    ) -> None:
+        """Compatibility alias for older game_frame that calls animate_move."""
+        self.animate_bot_move(move, on_finished=callback or (lambda: None))
+
     def _animate_step(self) -> None:
         if not self._animating:
             return
