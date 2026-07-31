@@ -95,18 +95,26 @@ class GameFrame(ctk.CTkFrame):
     def _status_text(self) -> str:
         if self.controller.is_game_over:
             return self.controller.result_text()
+        san = self.controller.last_san
+        suffix = f"  ·  {san}" if san else ""
         if self._bot_thinking:
-            return "Ход бота…"
+            return "Ход бота…" + suffix
         if self.controller.is_human_turn:
-            return "Ваш ход"
-        return "Ход бота…"
+            return "Ваш ход" + suffix
+        return "Ход бота…" + suffix
 
     def _on_square_clicked(self, square: chess.Square) -> None:
         if self._bot_thinking or self.board_canvas._animating:
             return
 
-        changed = self.controller.select_square(square)
-        if changed:
+        result = self.controller.select_square(square)
+
+        if result == "promotion":
+            self.board_canvas.redraw()
+            self._show_promotion_dialog()
+            return
+
+        if result:
             self.board_canvas.redraw()
             self.status_label.configure(text=self._status_text())
 
@@ -170,6 +178,64 @@ class GameFrame(ctk.CTkFrame):
         dialog.grab_set()
         ctk.CTkLabel(dialog, text=f"Stockfish:\n{msg}", text_color="#FF6B6B").pack(pady=30)
         ctk.CTkButton(dialog, text="OK", command=dialog.destroy).pack()
+
+    def _show_promotion_dialog(self) -> None:
+        """Modal dialog to choose promotion piece."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Превращение")
+        dialog.geometry("340x160")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color="#1A1A1A")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        ctk.CTkLabel(
+            dialog,
+            text="Выберите фигуру",
+            font=ctk.CTkFont(size=15),
+            text_color="#EEEEEE",
+        ).pack(pady=(18, 12))
+
+        row = ctk.CTkFrame(dialog, fg_color="#1A1A1A")
+        row.pack()
+
+        choices = [
+            ("Ферзь", chess.QUEEN),
+            ("Ладья", chess.ROOK),
+            ("Слон", chess.BISHOP),
+            ("Конь", chess.KNIGHT),
+        ]
+
+        def choose(piece_type: chess.PieceType) -> None:
+            dialog.destroy()
+            if self.controller.confirm_promotion(piece_type):
+                self.board_canvas.redraw()
+                self.status_label.configure(text=self._status_text())
+                if not self.controller.is_human_turn and not self.controller.is_game_over:
+                    self.after(60, self._trigger_bot)
+                elif self.controller.is_game_over:
+                    self._show_result()
+            else:
+                self.controller.cancel_promotion()
+                self.board_canvas.redraw()
+
+        def on_close() -> None:
+            self.controller.cancel_promotion()
+            self.board_canvas.redraw()
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
+
+        for label, ptype in choices:
+            ctk.CTkButton(
+                row,
+                text=label,
+                width=70,
+                height=36,
+                fg_color="#3B82F6",
+                hover_color="#2563EB",
+                command=lambda pt=ptype: choose(pt),
+            ).pack(side="left", padx=6)
 
     def _undo(self) -> None:
         if self.board_canvas._animating:
