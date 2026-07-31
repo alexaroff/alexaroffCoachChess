@@ -94,29 +94,38 @@ class GameFrame(ctk.CTkFrame):
         ctk.CTkButton(
             bottom,
             text="Сдаться",
-            width=110,
+            width=100,
             fg_color="#4B5563",
             hover_color="#374151",
             command=self._resign,
-        ).pack(side="left", padx=(20, 8))
+        ).pack(side="left", padx=(16, 6))
+
+        ctk.CTkButton(
+            bottom,
+            text="Ничья",
+            width=90,
+            fg_color="#4B5563",
+            hover_color="#374151",
+            command=self._offer_draw,
+        ).pack(side="left", padx=6)
 
         ctk.CTkButton(
             bottom,
             text="Отменить ход",
-            width=130,
+            width=120,
             fg_color="#4B5563",
             hover_color="#374151",
             command=self._undo,
-        ).pack(side="left", padx=8)
+        ).pack(side="left", padx=6)
 
         ctk.CTkButton(
             bottom,
             text="Новая партия",
-            width=140,
+            width=130,
             fg_color="#3B82F6",
             hover_color="#2563EB",
             command=self.on_new_game,
-        ).pack(side="right", padx=20)
+        ).pack(side="right", padx=16)
 
     def _status_text(self) -> str:
         if self.controller.is_game_over:
@@ -303,10 +312,26 @@ class GameFrame(ctk.CTkFrame):
             self._refresh_history()
             self._refresh_captured()
 
+    def _offer_draw(self) -> None:
+        if self._bot_thinking or self.board_canvas._animating:
+            return
+        if self.controller.is_game_over:
+            return
+        self._bot_generation += 1
+        self._bot_thinking = False
+        self.controller.offer_draw()
+        self.status_label.configure(text=self._status_text())
+        self._show_result()
+
     def _resign(self) -> None:
         if self._bot_thinking or self.board_canvas._animating:
             return
+        if self.controller.is_game_over:
+            return
+        self._bot_generation += 1
+        self._bot_thinking = False
         self.controller.resign()
+        self.status_label.configure(text=self._status_text())
         self._show_result()
 
     def _show_result(self) -> None:
