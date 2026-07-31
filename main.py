@@ -53,7 +53,7 @@ class App(ctk.CTk):
     def _show_engine_error(self, msg: str) -> None:
         dialog = ctk.CTkToplevel(self)
         dialog.title("Stockfish не найден")
-        dialog.geometry("420x220")
+        dialog.geometry("460x260")
         dialog.resizable(False, False)
         dialog.configure(fg_color="#1A1A1A")
         dialog.transient(self)
@@ -64,22 +64,27 @@ class App(ctk.CTk):
             text="Stockfish не найден",
             font=ctk.CTkFont(size=18, weight="bold"),
             text_color="#FF6B6B",
-        ).pack(pady=(24, 8))
+        ).pack(pady=(20, 8))
 
         ctk.CTkLabel(
             dialog,
-            text="Установи через:\n  brew install stockfish\nили укажи STOCKFISH_PATH.",
+            text=(
+                "Без Stockfish играть нельзя.\n\n"
+                "macOS:   brew install stockfish\n"
+                "Linux:   sudo apt install stockfish\n\n"
+                "Или задай путь: export STOCKFISH_PATH=/path/to/stockfish"
+            ),
             font=ctk.CTkFont(size=13),
             text_color="#CCCCCC",
             justify="left",
-        ).pack(pady=4)
+        ).pack(pady=4, padx=24)
 
         ctk.CTkButton(
             dialog,
             text="Понятно",
             width=120,
             command=dialog.destroy,
-        ).pack(pady=20)
+        ).pack(pady=16)
 
     def _clear(self) -> None:
         if self.current_frame is not None:
