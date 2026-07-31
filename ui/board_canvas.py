@@ -35,7 +35,7 @@ class BoardCanvas(tk.Canvas):
         on_square_clicked: Callable[[chess.Square], None],
         **kwargs,
     ):
-        self._board_origin = COORD_MARGIN  # top-left of square a1-area in canvas coords
+        self._board_origin = COORD_MARGIN
         size = SQUARE_SIZE * 8 + COORD_MARGIN
         super().__init__(
             master,
@@ -51,7 +51,6 @@ class BoardCanvas(tk.Canvas):
         self._load_pieces()
         self.bind("<Button-1>", self._on_click)
 
-        # Animation state
         self._animating = False
         self._anim_from: Optional[chess.Square] = None
         self._anim_to: Optional[chess.Square] = None
@@ -113,7 +112,7 @@ class BoardCanvas(tk.Canvas):
     def _draw_highlights(self) -> None:
         if self.controller.last_move:
             for sq in (self.controller.last_move.from_square, self.controller.last_move.to_square):
-                self._highlight_square(sq, LAST_MOVE)
+                self._highlight_square(sq, LAST_MOVE, style="last")
 
         sel = self.controller.get_selected_square()
         if sel is not None:
@@ -122,7 +121,7 @@ class BoardCanvas(tk.Canvas):
         if self.controller.board.is_check():
             king_sq = self.controller.board.king(self.controller.board.turn)
             if king_sq is not None:
-                self._highlight_square(king_sq, CHECK_COLOR)
+                self._highlight_square(king_sq, CHECK_COLOR, style="check")
 
         if self._animating:
             if self._anim_from is not None:
@@ -130,15 +129,22 @@ class BoardCanvas(tk.Canvas):
             if self._anim_to is not None:
                 self._highlight_square(self._anim_to, HIGHLIGHT_TO)
 
-    def _highlight_square(self, square: chess.Square, color: str) -> None:
+    def _highlight_square(self, square: chess.Square, color: str, style: str = "soft") -> None:
         row, col = self.controller.square_to_display(square)
         o = self._board_origin
         x1 = o + col * SQUARE_SIZE
         y1 = row * SQUARE_SIZE
-        self.create_rectangle(
-            x1, y1, x1 + SQUARE_SIZE, y1 + SQUARE_SIZE,
-            fill=color, outline="", stipple="gray50"
-        )
+        x2 = x1 + SQUARE_SIZE
+        y2 = y1 + SQUARE_SIZE
+
+        if style == "last":
+            self.create_rectangle(x1, y1, x2, y2, fill=color, outline="", stipple="gray25")
+            self.create_rectangle(x1 + 2, y1 + 2, x2 - 2, y2 - 2, outline=color, width=3)
+        elif style == "check":
+            self.create_rectangle(x1, y1, x2, y2, fill=color, outline="", stipple="gray25")
+            self.create_rectangle(x1 + 1, y1 + 1, x2 - 1, y2 - 1, outline=color, width=2)
+        else:
+            self.create_rectangle(x1, y1, x2, y2, fill=color, outline="", stipple="gray50")
 
     def _draw_pieces(self) -> None:
         for square in chess.SQUARES:
