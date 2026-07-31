@@ -1,32 +1,32 @@
 # alexaroffCoachChess
 
-Standalone desktop chess — **You vs Bot**.  
+Настольные шахматы — **ты против бота**.  
 CustomTkinter + python-chess + Stockfish.
 
-**Version:** 0.7.1 · **Updated:** 31 July 2026
+**Версия:** 0.7.1 · **Обновлено:** 31 июля 2026
 
 ---
 
-## Features
+## Возможности
 
-| Area | What |
-|------|------|
-| **Game** | Click-click moves, legal move hints, undo (full turn), resign, draw offer |
-| **Board** | Coordinates a–h / 1–8, orientation (you bottom/top), color choice |
-| **Visual** | Dark theme, last-move amber highlight + border, check highlight, piece animation |
-| **Promotion** | Dialog: Queen / Rook / Bishop / Knight |
-| **History** | Move list (SAN) under the board |
-| **Captures** | Captured pieces shown in the top bar |
-| **Bot strength** | 8 Elo levels: 400 · 600 · 800 · 1200 · 1600 · 2000 · 2400 · 2600 |
-| **Engine** | Non-blocking Stockfish (background thread), graceful error if missing |
+| Область | Что есть |
+|---------|----------|
+| **Игра** | Ходы клик-клик, подсказки легальных ходов, отмена хода, сдача, предложение ничьей |
+| **Доска** | Координаты a–h / 1–8, ориентация (я снизу / сверху), выбор цвета |
+| **Визуал** | Тёмная тема, яркая подсветка последнего хода, подсветка шаха, анимация хода бота |
+| **Превращение** | Диалог: ферзь / ладья / слон / конь |
+| **История** | Список ходов (SAN) под доской |
+| **Взятия** | Съеденные фигуры в верхней панели |
+| **Сила бота** | 8 уровней ЭЛО: 400 · 600 · 800 · 1200 · 1600 · 2000 · 2400 · 2600 |
+| **Движок** | Stockfish в отдельном потоке (UI не подвисает), понятный диалог если бинарник не найден |
 
 ---
 
-## Requirements
+## Требования
 
 - Python 3.10+
-- [Stockfish](https://stockfishchess.org/) binary
-- Packages from `requirements.txt`
+- [Stockfish](https://stockfishchess.org/)
+- Пакеты из `requirements.txt`
 
 ```
 python-chess>=1.10
@@ -36,7 +36,7 @@ Pillow>=10.0
 
 ---
 
-## Install & Run
+## Установка и запуск
 
 ```bash
 cd ~/alexaroffCoachChess
@@ -49,77 +49,77 @@ pip install -r requirements.txt
 # Stockfish
 #   macOS:  brew install stockfish
 #   Linux:  sudo apt install stockfish
-#   or:     export STOCKFISH_PATH=/path/to/stockfish
+#   или:    export STOCKFISH_PATH=/path/to/stockfish
 
 python main.py
-# if needed: python3 main.py
+# если не находится: python3 main.py
 ```
 
-If Stockfish is missing, the app shows a clear dialog (no traceback).
+Если Stockfish не установлен — приложение покажет диалог с инструкцией, без traceback.
 
 ---
 
-## Project layout
+## Структура проекта
 
 ```
 alexaroffCoachChess/
-├── main.py                 # Entry point, App window
-├── config.py               # Colors, Elo table, paths, version
-├── engine_manager.py       # Stockfish wrapper (strength by Elo)
+├── main.py                 # Точка входа, окно приложения
+├── config.py               # Цвета, таблица ЭЛО, пути, версия
+├── engine_manager.py       # Обёртка над Stockfish (сила по ЭЛО)
 ├── requirements.txt
 ├── game/
 │   ├── player.py           # HumanPlayer / BotPlayer
-│   └── game_controller.py  # Board state, moves, undo, draw, captures
+│   └── game_controller.py  # Состояние партии, ходы, undo, ничья, взятия
 ├── ui/
-│   ├── setup_frame.py      # Color, orientation, Elo selector
-│   ├── game_frame.py       # Status, history, buttons, promotion dialog
-│   └── board_canvas.py     # Board draw, coords, highlights, animation
-└── templates/              # Piece images (wP.png … bK.png)
+│   ├── setup_frame.py      # Цвет, ориентация, выбор ЭЛО
+│   ├── game_frame.py       # Статус, история, кнопки, диалог promotion
+│   └── board_canvas.py     # Отрисовка доски, координаты, подсветка, анимация
+└── templates/              # Картинки фигур (wP.png … bK.png)
 ```
 
 ---
 
-## Elo mapping (approx.)
+## Уровни силы бота (примерно)
 
-| Elo  | Feel        | Skill Level | Movetime |
-|------|-------------|-------------|----------|
-| 400  | Beginner    | 0           | 50 ms    |
-| 600  |             | 1           | 80 ms    |
-| 800  |             | 3           | 120 ms   |
-| 1200 | Club-ish    | 6           | 200 ms   |
-| 1600 | Club        | 10          | 350 ms   |
-| 2000 | Strong      | 14          | 500 ms   |
-| 2400 | Very strong | 17          | 800 ms   |
-| 2600 | Master      | 20 (full)   | 1200 ms  |
+| ЭЛО  | Уровень     | Skill Level | Время на ход |
+|------|-------------|-------------|--------------|
+| 400  | Новичок     | 0           | 50 мс        |
+| 600  |             | 1           | 80 мс        |
+| 800  |             | 3           | 120 мс       |
+| 1200 | Клубный−    | 6           | 200 мс       |
+| 1600 | Клубный     | 10          | 350 мс       |
+| 2000 | Сильный     | 14          | 500 мс       |
+| 2400 | Очень сильный | 17        | 800 мс       |
+| 2600 | Мастер      | 20 (полный) | 1200 мс      |
 
-Uses Stockfish `Skill Level` + `UCI_LimitStrength` / `UCI_Elo` where supported.
+Используются опции Stockfish `Skill Level` и `UCI_LimitStrength` / `UCI_Elo`.
 
 ---
 
-## Changelog (recent)
+## История изменений
 
-**v0.7.1** — 31 Jul 2026  
-- Draw offer (bot always accepts)  
-- Brighter last-move highlight (amber + border)  
-- Clearer Stockfish-missing dialog  
+**v0.7.1** — 31 июля 2026  
+- Предложение ничьей (бот всегда принимает)  
+- Более яркая подсветка последнего хода (янтарь + рамка)  
+- Улучшенный диалог, если Stockfish не найден  
 
 **v0.7.0**  
-- Board coordinates, captured pieces, 8 Elo levels  
+- Координаты на доске, съеденные фигуры, 8 уровней ЭЛО  
 
 **v0.6.x**  
-- Promotion dialog, check highlight, move history, fixed undo  
+- Диалог превращения, подсветка шаха, история ходов, исправленный undo  
 
 **v0.5.x**  
-- Non-blocking bot, piece animation, takeback  
+- Неблокирующий бот, анимация фигур, отмена хода  
 
 ---
 
-## Notes
+## Заметки
 
-- Orientation is locked at game start (by design).  
-- Undo takes back your last move + bot’s reply (or only yours if bot hasn’t moved yet).  
-- Draw is always accepted by the bot (simple training mode).  
+- Ориентацию доски можно выбрать только до старта партии.  
+- «Отменить ход» откатывает твой ход + ответ бота (или только твой, если бот ещё не ответил).  
+- Ничья всегда принимается ботом (режим тренировки).  
 
 ---
 
-**Repo:** https://github.com/alexaroff/alexaroffCoachChess
+**Репозиторий:** https://github.com/alexaroff/alexaroffCoachChess
