@@ -20,6 +20,7 @@ from config import (
     LAST_MOVE,
     SELECT_COLOR,
     LEGAL_MOVE_DOT,
+    CHECK_COLOR,
     TEMPLATES_DIR,
 )
 
@@ -102,6 +103,12 @@ class BoardCanvas(tk.Canvas):
         sel = self.controller.get_selected_square()
         if sel is not None:
             self._highlight_square(sel, SELECT_COLOR)
+
+        # King in check
+        if self.controller.board.is_check():
+            king_sq = self.controller.board.king(self.controller.board.turn)
+            if king_sq is not None:
+                self._highlight_square(king_sq, CHECK_COLOR)
 
         # Animation highlights
         if self._animating:
