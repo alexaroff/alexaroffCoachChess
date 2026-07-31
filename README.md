@@ -39,7 +39,7 @@ CustomTkinter + python-chess + Stockfish.
 
 ## Требования
 
-- Python 3.10+ (**на macOS — 3.12 из Homebrew**, системный 3.9 даёт пустое окно)
+- Python 3.10+ (**macOS: 3.12 из Homebrew**; **Windows: 3.12 через winget**)
 - [Stockfish](https://stockfishchess.org/)
 - Пакеты из `requirements.txt`
 
@@ -144,22 +144,124 @@ echo
 EOF
 ```
 
-**Важно:** на macOS нужен **Python 3.12 из Homebrew**, не системный 3.9 — иначе CustomTkinter часто открывает пустое серое окно.
+**Важно:** на macOS нужен **Python 3.12 из Homebrew**, не системный 3.9 — иначе CustomTkinter часто открывает пустое серое окно.  
+**macOS:** 14 (Sonoma) и новее (Intel и Apple Silicon).
+
+### Windows 11 с нуля
+
+Один блок в **PowerShell** / Windows Terminal. Этапы с проверками, как на macOS.  
+Ставит Git, Python 3.12, Stockfish (через winget), клонирует репо, venv, зависимости и запускает игру.
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+function Ok($m)   { Write-Host "  OK: $m" -ForegroundColor Green }
+function Fail($m) { Write-Host "  FAIL: $m" -ForegroundColor Red; exit 1 }
+function Step($m) { Write-Host ""; Write-Host "=== $m ===" -ForegroundColor Cyan }
+
+# --- 1. winget ---
+Step "1/6 winget"
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+  Fail "winget не найден. Обнови App Installer из Microsoft Store и перезапусти Terminal."
+}
+Ok "winget $(winget --version)"
+
+# --- 2. Git + Python 3.12 + Stockfish ---
+Step "2/6 Git, Python 3.12, Stockfish"
+winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
+winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+winget install -e --id Stockfish.Stockfish --accept-package-agreements --accept-source-agreements
+
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+            [System.Environment]::GetEnvironmentVariable("Path","User")
+
+$py = $null
+foreach ($c in @(
+  "$env:LocalAppData\Programs\Python\Python312\python.exe",
+  "$env:ProgramFiles\Python312\python.exe",
+  "python3.12",
+  "python"
+)) {
+  if ($c -like "*\*" -and (Test-Path $c)) { $py = $c; break }
+  if ($c -notlike "*\*") {
+    $cmd = Get-Command $c -ErrorAction SilentlyContinue
+    if ($cmd) { $py = $cmd.Source; break }
+  }
+}
+if (-not $py) { Fail "python 3.12 не найден. Закрой Terminal, открой заново и запусти скрипт ещё раз." }
+
+$ver = & $py --version 2>&1
+if ($ver -notmatch "3\.12") { Fail "нужен Python 3.12, сейчас: $ver" }
+Ok $ver
+
+$sf = Get-Command stockfish -ErrorAction SilentlyContinue
+if (-not $sf) {
+  Write-Host "  WARN: stockfish не в PATH — приложение может само найти или попросить путь" -ForegroundColor Yellow
+} else {
+  Ok "stockfish → $($sf.Source)"
+}
+
+# --- 3. Клон ---
+Step "3/6 Клон репозитория"
+$project = Join-Path $env:USERPROFILE "alexaroffCoachChess"
+if (Test-Path $project) { Remove-Item -Recurse -Force $project }
+git clone https://github.com/alexaroff/alexaroffCoachChess.git $project
+if (-not (Test-Path (Join-Path $project "requirements.txt"))) { Fail "нет requirements.txt" }
+if (-not (Test-Path (Join-Path $project "main.py"))) { Fail "нет main.py" }
+Ok "клон в $project"
+
+# --- 4. venv ---
+Step "4/6 Виртуальное окружение"
+Set-Location $project
+if (Test-Path "venv") { Remove-Item -Recurse -Force venv }
+& $py -m venv venv
+$venvPy = Join-Path $project "venv\Scripts\python.exe"
+if (-not (Test-Path $venvPy)) { Fail "venv не создался" }
+Ok "venv: $(& $venvPy --version)"
+
+# --- 5. Зависимости ---
+Step "5/6 pip install"
+& $venvPy -m pip install --upgrade pip
+& $venvPy -m pip install -r (Join-Path $project "requirements.txt")
+& $venvPy -c "import chess, customtkinter, PIL"
+Ok "зависимости установлены"
+
+# --- 6. Запуск ---
+Step "6/6 Запуск"
+Write-Host "Запускаю main.py — должно открыться окно настройки партии."
+& $venvPy (Join-Path $project "main.py")
+
+Write-Host ""
+Write-Host "=============================================="
+Write-Host "  Готово"
+Write-Host "=============================================="
+Write-Host "Папка:  $project"
+Write-Host "Снова:  cd `$env:USERPROFILE\alexaroffCoachChess; .\venv\Scripts\Activate.ps1; python main.py"
+Write-Host ""
+```
+
+**Замечания для Windows:**
+- Если после `winget install Python` не видит `python` — **закрой Terminal и открой снова**, затем повтори скрипт.
+- Если `python` открывает Microsoft Store: **Параметры → Приложения → Доп. параметры → Псевдонимы выполнения** → выключи `python.exe` / `python3.exe`.
+- Если ругается на `Activate.ps1`: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
 
 ### Повторный запуск (уже установлено)
+
+**macOS / Linux:**
 
 ```bash
 cd ~/alexaroffCoachChess
 source venv/bin/activate
-export TK_SILENCE_DEPRECATION=1
+export TK_SILENCE_DEPRECATION=1   # только macOS
 python main.py
 ```
 
-Или:
+**Windows (PowerShell):**
 
-```bash
-cd ~/alexaroffCoachChess
-./run.sh
+```powershell
+cd $env:USERPROFILE\alexaroffCoachChess
+.\venv\Scripts\Activate.ps1
+python main.py
 ```
 
 ### Linux (кратко)
