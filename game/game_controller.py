@@ -52,6 +52,8 @@ class GameController:
 
         self._selected_square: Optional[chess.Square] = None
         self.last_move: Optional[chess.Move] = None
+        self.last_san: Optional[str] = None
+        self._pending_promotion: Optional[tuple[chess.Square, chess.Square]] = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -120,10 +122,12 @@ class GameController:
     # ------------------------------------------------------------------
     # Move handling
     # ------------------------------------------------------------------
-    def select_square(self, square: chess.Square) -> bool:
+    def select_square(self, square: chess.Square):
         """
         Handle a click on a square.
-        Returns True if the board should be redrawn.
+        Returns True if the board should be redrawn,
+        "promotion" if promotion dialog is needed,
+        False otherwise.
         Does NOT trigger the bot — UI is responsible for that.
         """
         if not self.is_human_turn:
@@ -152,15 +156,25 @@ class GameController:
             return True
 
         # Try to make a move
-        move = chess.Move(from_sq, square)
-
-        # Handle promotion (always queen for simplicity in MVP)
         piece_at_from = self.board.piece_at(from_sq)
+        needs_promo = False
         if piece_at_from and piece_at_from.piece_type == chess.PAWN:
             if (self.human_color == chess.WHITE and chess.square_rank(square) == 7) or \
                (self.human_color == chess.BLACK and chess.square_rank(square) == 0):
-                move = chess.Move(from_sq, square, promotion=chess.QUEEN)
+                needs_promo = True
 
+        if needs_promo:
+            # Check that at least one promotion is legal
+            promo_moves = [
+                chess.Move(from_sq, square, promotion=p)
+                for p in (chess.QUEEN, chess.ROOK, chess.BISHOP, chess.KNIGHT)
+            ]
+            if any(m in self.board.legal_moves for m in promo_moves):
+                self._pending_promotion = (from_sq, square)
+                return "promotion"  # special signal for UI
+            return True
+
+        move = chess.Move(from_sq, square)
         if move in self.board.legal_moves:
             self._make_move(move)
             return True
@@ -177,10 +191,13 @@ class GameController:
 
     def _make_move(self, move: chess.Move) -> None:
         """Push human move. Does NOT request bot move — UI decides when to call request_bot_move."""
+        san = self.board.san(move)
         self.board.push(move)
         self.last_move = move
+        self.last_san = san
         self._selected_square = None
-        log.info("Human move: %s", move.uci())
+        self._pending_promotion = None
+        log.info("Human move: %s (%s)", move.uci(), san)
 
         if self.board.is_game_over() and self.on_game_over:
             self.on_game_over(self.result_text())
@@ -209,15 +226,33 @@ class GameController:
             log.warning("Attempted to confirm illegal bot move: %s", move.uci())
             return
 
+        san = self.board.san(move)
         self.board.push(move)
         self.last_move = move
-        log.info("Bot move: %s", move.uci())
+        self.last_san = san
+        log.info("Bot move: %s (%s)", move.uci(), san)
 
         if self.on_bot_move_end:
             self.on_bot_move_end(move)
 
         if self.board.is_game_over() and self.on_game_over:
             self.on_game_over(self.result_text())
+
+    def confirm_promotion(self, piece_type: chess.PieceType) -> bool:
+        """Finish a pending promotion with the chosen piece. Returns True if move was made."""
+        if self._pending_promotion is None:
+            return False
+        from_sq, to_sq = self._pending_promotion
+        move = chess.Move(from_sq, to_sq, promotion=piece_type)
+        if move not in self.board.legal_moves:
+            self._pending_promotion = None
+            return False
+        self._make_move(move)
+        return True
+
+    def cancel_promotion(self) -> None:
+        self._pending_promotion = None
+        self._selected_square = None
 
     def undo(self) -> bool:
         """
@@ -237,7 +272,10 @@ class GameController:
             self.board.pop()
 
         self.last_move = self.board.move_stack[-1] if self.board.move_stack else None
+        # Rebuild last_san is hard without history; clear for simplicity
+        self.last_san = None
         self._selected_square = None
+        self._pending_promotion = None
         log.info("Undo → ply count now %s", len(self.board.move_stack))
         return True
 
