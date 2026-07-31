@@ -57,7 +57,7 @@ cd ~/alexaroffCoachChess
 git pull origin main
 
 python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+source venv/bin/activate          # Windows: venv\\Scripts\\activate
 pip install -r requirements.txt
 
 # Stockfish
@@ -66,6 +66,7 @@ pip install -r requirements.txt
 #   или:    export STOCKFISH_PATH=/path/to/stockfish
 
 python main.py
+# если не находится: python3 main.py
 ```
 
 Если Stockfish не установлен — приложение покажет диалог с инструкцией, без traceback.
@@ -76,20 +77,20 @@ python main.py
 
 ```
 alexaroffCoachChess/
-├── main.py                 # Точка входа
-├── config.py               # Цвета, ЭЛО, режимы, версия, LIVE_ANALYSIS
-├── engine_manager.py       # Stockfish (сила по ЭЛО)
-├── ROADMAP.md              # План по этапам
+├── main.py                 # Точка входа, окно приложения
+├── config.py               # Цвета, таблица ЭЛО, пути, версия
+├── engine_manager.py       # Обёртка над Stockfish (сила по ЭЛО)
+├── ROADMAP.md              # План развития по этапам (читать перед новой сессией)
 ├── requirements.txt
 ├── game/
-│   ├── player.py
-│   ├── game_controller.py  # Партия, undo, review, hint API
-│   └── analyzer.py         # Разбор партии
+│   ├── player.py           # HumanPlayer / BotPlayer
+│   ├── game_controller.py  # Состояние партии, ходы, undo, ничья, взятия, review
+│   └── analyzer.py         # Разбор партии (Stockfish + классификация)
 ├── ui/
-│   ├── setup_frame.py      # Режим, цвет, ориентация, ЭЛО
-│   ├── game_frame.py       # Статус, история, Подсказка, Разбор
-│   └── board_canvas.py     # Доска, подсветки, анимация
-└── templates/              # Фигуры
+│   ├── setup_frame.py      # Цвет, ориентация, выбор ЭЛО
+│   ├── game_frame.py       # Статус, история, кнопки, диалог promotion
+│   └── board_canvas.py     # Отрисовка доски, координаты, подсветка, анимация
+└── templates/              # Картинки фигур (wP.png … bK.png)
 ```
 
 ---
@@ -107,6 +108,8 @@ alexaroffCoachChess/
 | 2400 | Очень сильный | 17          | 800 мс       |
 | 2600 | Мастер        | 20 (полный) | 1200 мс      |
 
+Используются опции Stockfish `Skill Level` и `UCI_LimitStrength` / `UCI_Elo`.
+
 ---
 
 ## История изменений
@@ -120,7 +123,10 @@ alexaroffCoachChess/
 - Stage 1: разбор партии (классификация, цвета, клик → сравнение)  
 
 **v0.7.1** — 31 июля 2026  
-- Предложение ничьей, яркая подсветка последнего хода, диалог если Stockfish не найден  
+- Предложение ничьей (бот всегда принимает)  
+- Более яркая подсветка последнего хода (янтарь + рамка)  
+- Улучшенный диалог, если Stockfish не найден  
+- Зафиксирован ROADMAP.md  
 
 **v0.7.0**  
 - Координаты на доске, съеденные фигуры, 8 уровней ЭЛО  
@@ -138,8 +144,7 @@ alexaroffCoachChess/
 - Ориентацию доски можно выбрать только до старта партии.  
 - «Отменить ход» откатывает твой ход + ответ бота (или только твой, если бот ещё не ответил).  
 - Ничья всегда принимается ботом.  
-- «Подсказка» только в режиме Тренировка и только на твоём ходу.  
-- Старый концепт (оверлей Duolingo) не развивается; архив: ветка `archive/duolingo-overlay-2026-07`.
+- «Подсказка» только в режиме Тренировка и только на твоём ходу.
 
 ---
 
