@@ -14,7 +14,7 @@ from pathlib import Path
 # Identity
 # ---------------------------------------------------------------------------
 APP_NAME = "alexaroffCoachChess"
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.10.0"
 APP_ID = "com.alexaroff.coachchess"
 
 # Game modes (Stage 0)
@@ -24,6 +24,10 @@ MODE_LABELS = {
     MODE_PLAY: "Игра",
     MODE_TRAIN: "Тренировка",
 }
+
+# Live coach (Stage 4) — short analysis for hints / future eval bar
+LIVE_ANALYSIS_MOVETIME_MS = 200
+HINT_COLOR = "#A78BFA"  # violet — distinct from review cyan and last-move amber
 
 # ---------------------------------------------------------------------------
 # Paths
